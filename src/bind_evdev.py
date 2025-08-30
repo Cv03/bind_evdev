@@ -127,7 +127,7 @@ class _Stroke:
     def write_raw(self, key_code: int, event_value: int) -> None:
         cast(SupportsWrite, self.ui).write(ecodes.EV_KEY, key_code, event_value)
         cast(SupportsSyn, self.ui).syn()
-        # Lang tu keyboard's weird behavior
+        sleep(0.005)
 
     def write_type(self, key_code: int) -> None:
         self.write_raw(key_code, KeyEvent.key_down)
