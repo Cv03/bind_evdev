@@ -124,20 +124,22 @@ class _Stroke:
     def __init__(self) -> None:
         self.ui: UInput = UInput()
 
-    def write_raw(self, key_code: int, event_value: int) -> None:
+    def write_raw(self, key_code: int, event_value: int, /,
+                  delay: bool = False) -> None:
         cast(SupportsWrite, self.ui).write(ecodes.EV_KEY, key_code, event_value)
         cast(SupportsSyn, self.ui).syn()
-        sleep(0.005)
+        if delay:
+            sleep(0.005)
 
     def write_type(self, key_code: int) -> None:
-        self.write_raw(key_code, KeyEvent.key_down)
-        self.write_raw(key_code, KeyEvent.key_up)
+        self.write_raw(key_code, KeyEvent.key_down, delay=True)
+        self.write_raw(key_code, KeyEvent.key_up, delay=True)
 
     def write_hotkey(self, *key_codes: int) -> None:
         for key_code in key_codes:
-            self.write_raw(key_code, KeyEvent.key_down)
+            self.write_raw(key_code, KeyEvent.key_down, delay=True)
         for key_code in key_codes[::-1]:
-            self.write_raw(key_code, KeyEvent.key_up)
+            self.write_raw(key_code, KeyEvent.key_up, delay=True)
 
 
 def find_device(
