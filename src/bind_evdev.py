@@ -12,6 +12,8 @@ type ShortcutResult = Literal['accept', 'catch', 'reject']
 type Before = Sequence[Callable[[KeyEvent], ShortcutResult]]
 type After = Sequence[Callable[[KeyEvent], Any]]  # pyright: ignore[reportExplicitAny]
 
+# To access uinput without a privileged account, e.g. root, see:
+# https://github.com/kmonad/kmonad/blob/master/doc/faq.md#q-how-do-i-get-uinput-permissions
 
 class SupportsReadLoop(Protocol):
     def read_loop(self) -> Iterator[InputEvent]: ...
@@ -122,12 +124,13 @@ class _BoundShortcut:
 
 class _Stroke:
     def __init__(self) -> None:
-        self.ui: UInput = UInput()
+        self.uinput: UInput = UInput()
 
     def write_raw(self, key_code: int, event_value: int, /,
                   delay: bool = False) -> None:
-        cast(SupportsWrite, self.ui).write(ecodes.EV_KEY, key_code, event_value)
-        cast(SupportsSyn, self.ui).syn()
+        cast(SupportsWrite, self.uinput).write(
+            ecodes.EV_KEY, key_code, event_value)
+        cast(SupportsSyn, self.uinput).syn()
         if delay:
             sleep(0.005)
 
@@ -209,11 +212,11 @@ class Bind:
             shortcuts.sort(key=lambda s: s.priority, reverse=True)
 
     def _prepare(self):
-        # Wait until device is idle.
+        # Wait until device idle.
         while self.device.active_keys():
             sleep(0.05)
 
-        # Refresh history (if after a reconnection.)
+        # Refresh history (after a reconnection.)
         self.press_history.clear()
         self.data.clear()
 

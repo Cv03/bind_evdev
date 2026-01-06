@@ -166,12 +166,23 @@ numlock_off.no_op(ecodes.KEY_KPENTER, after=[_unset_kpenter_mode])
 
 @numlock_off(ecodes.KEY_KP0, on='tap')
 def command_goldendict_popup(_):
+    ps_result = subprocess.run(['flatpak', 'ps', '--columns=application'],
+                               capture_output=True, text=True)
+    running_app_ids = [line.strip() for line in ps_result.stdout.splitlines()]
+    if not 'io.github.xiaoyifang.goldendict_ng' in running_app_ids:
+        return
+
     bind.stroke.write_hotkey(ecodes.KEY_LEFTCTRL, ecodes.KEY_C)
     sleep(0.03)
     run_result = subprocess.run(['wl-paste', '-n', '-t', 'text'],
                                 capture_output=True, text=True)
     if run_result.returncode == 0 and run_result.stdout:
-        _ = subprocess.run(['goldendict-ng', '-s', run_result.stdout])
+        _ = subprocess.run(
+            ['flatpak', 'run', '--branch=stable', '--arch=x86_64',
+             '--command=goldendict', '--file-forwarding',
+             'io.github.xiaoyifang.goldendict_ng',
+             '--popup', run_result.stdout]
+        )
 
 
 @numlock_off(ecodes.KEY_KPDOT, on='tap')
@@ -201,4 +212,6 @@ numpad_key_codes = (
 for key_code in numpad_key_codes:
     numlock_off.no_op(key_code)
 
-bind.serve()
+
+if __name__ == '__main__':
+    bind.serve()
