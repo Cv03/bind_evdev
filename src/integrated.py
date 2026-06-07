@@ -38,11 +38,7 @@ def capture_unmapped_numpad_keys(bind: Bind, e: InputEvent):
 
 
 bind = Bind(
-    name='BT5.0 Keyboard',
-    remap={
-        ecodes.KEY_RIGHTMETA: ecodes.KEY_RIGHTCTRL,
-        ecodes.KEY_INSERT: ecodes.KEY_SYSRQ,
-    },
+    name='AT Translated Set 2 keyboard',
     global_before=[raw_numpad_keys_when_numlock_on],
     global_after=[capture_unmapped_numpad_keys])
 
@@ -62,6 +58,7 @@ bind(k.KEY_HOME, to_key=k.KEY_KP7)
 bind(k.KEY_PAGEUP, to_key=[k.KEY_KP8, k.KEY_KP7])
 
 bind(k.KEY_BRIGHTNESSDOWN, to_key=[k.KEY_KPPLUS, k.KEY_KP8], on='tap')
+# bind(None, to_key=k.KEY_KP8)
 
 bind(k.KEY_VOLUMEUP, to_key=[k.KEY_KPPLUS, k.KEY_KP9])
 bind(k.KEY_END, to_key=k.KEY_KP9)
