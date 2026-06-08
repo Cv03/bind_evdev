@@ -154,7 +154,7 @@ def _split_key(key: int | Sequence[int]):
 
 
 class Bind:
-    __slots__: tuple[str, ...] = ('device', 'uinput', '_remap', '_registry', 'pressed', 'trigger_timestamp', '_hold_fired', '_catch_key_up', 'data', 'global_before', 'global_after', '_remap_copilot_key', 'copilot_keystate', '_copilot_counter', '_copilot_captured_keyevents')
+    __slots__: tuple[str, ...] = ('device', 'uinput', '_remap', '_registry', 'pressed', 'trigger_timestamp', '_hold_fired', '_catch_key_up', 'data', 'global_before', 'global_after', '_is_copilot_key_remapped', '_copilot_counter', '_copilot_captured_events')
 
     def __init__(
         self,
@@ -197,11 +197,10 @@ class Bind:
         if global_after:
             self.global_after.extend(global_after)
 
-        self._remap_copilot_key: bool = remap_copilot_key
-        if self._remap_copilot_key:
-            self.copilot_keystate: int = KeyEvent.key_up
+        self._is_copilot_key_remapped: bool = remap_copilot_key
+        if self._is_copilot_key_remapped:
             self._copilot_counter: int = 0
-            self._copilot_captured_keyevents: list[InputEvent] = []
+            self._copilot_captured_events: list[InputEvent] = []
 
     def _sort_shortcuts_by_modifier_number(self):
         for v in self._registry.values():
@@ -244,9 +243,9 @@ class Bind:
 
         if not is_fire_original and global_before_flag is None:
             if e.value == KeyEvent.key_up:
-                for catch_keys, raw_shortcut in self._catch_key_up.items():
+                for catch_keys, shortcut in self._catch_key_up.items():
                     if e.code in catch_keys:
-                        is_fire_original = raw_shortcut(e)
+                        is_fire_original = shortcut(e)
 
             for modifier, shortcuts in self._registry[e.code].items():
                 if modifier.issubset(self.pressed):
@@ -318,6 +317,43 @@ class Bind:
             if e.code in self.trigger_timestamp:
                 self.trigger_timestamp[e.code] = None
 
+    def _remap_copliot_key(self, e: InputEvent):
+        match e.value != KeyEvent.key_up, self._copilot_counter:
+            case True, 0:
+                capture = e.code == ecodes.KEY_LEFTMETA
+            case True, 1:
+                capture = e.code == ecodes.KEY_LEFTSHIFT
+            case True, 2:
+                capture = e.code == ecodes.KEY_F23
+            case False, 0:
+                capture = e.code == ecodes.KEY_F23
+            case False, 1:
+                capture = e.code == ecodes.KEY_LEFTSHIFT
+            case False, 2:
+                capture = e.code == ecodes.KEY_LEFTMETA
+            case _:
+                capture = False
+
+        if capture:
+            self._copilot_captured_events.append(e)
+            self._copilot_counter += 1
+
+            if self._copilot_counter == 3:
+                e.code = ecodes.KEY_RIGHTCTRL
+                self._process_event(e)
+                self._copilot_captured_events.clear()
+                self._copilot_counter = 0
+
+            return True
+
+        if self._copilot_counter > 0:
+            for e in self._copilot_captured_events:
+                self._process_event(e)
+            self._copilot_captured_events.clear()
+            self._copilot_counter = 0
+
+        return False
+
     def serve(self) -> Never:  # pyright: ignore[reportReturnType]
         self._sort_shortcuts_by_modifier_number()
         self._cleanup_states()
@@ -332,43 +368,9 @@ class Bind:
                 if e.type != ecodes.EV_KEY:
                     continue
 
-                # Coplilot remap starts.
-                if self._remap_copilot_key:
-                    match e.value != KeyEvent.key_up, self._copilot_counter:
-                        case True, 0:
-                            capture = e.code == ecodes.KEY_LEFTMETA
-                        case True, 1:
-                            capture = e.code == ecodes.KEY_LEFTSHIFT
-                        case True, 2:
-                            capture = e.code == ecodes.KEY_F23
-                        case False, 0:
-                            capture = e.code == ecodes.KEY_F23
-                        case False, 1:
-                            capture = e.code == ecodes.KEY_LEFTSHIFT
-                        case False, 2:
-                            capture = e.code == ecodes.KEY_LEFTMETA
-                        case _:
-                            capture = False
-
-                    if capture:
-                        self._copilot_captured_keyevents.append(e)
-                        self._copilot_counter += 1
-
-                        if self._copilot_counter == 3:
-                            self.copilot_keystate = e.value
-                            e.code = ecodes.KEY_RIGHTCTRL
-                            self._process_event(e)
-                            self._copilot_captured_keyevents.clear()
-                            self._copilot_counter = 0
-
-                        continue
-
-                    if self._copilot_counter > 0:
-                        for e in self._copilot_captured_keyevents:
-                            self._process_event(e)
-                        self._copilot_captured_keyevents.clear()
-                        self._copilot_counter = 0
-                # Coplilot remap ends.
+                if self._is_copilot_key_remapped and self._remap_copliot_key(
+                        e):
+                    continue
 
                 self._process_event(e)
         except OSError as e:
