@@ -29,14 +29,16 @@ def numpad_shortcuts(bind: Bind):
     ))
 
     def raw_numpad_keys_when_numlock_on(bind: Bind, e: InputEvent):
-        if e.code in numpad_key_codes and ecodes.LED_NUML in bind.device.leds():
+        if (e.code in numpad_key_codes and
+                ecodes.LED_NUML in bind.device.leds()):
             return True
 
     assert bind.global_before is not None
     bind.global_before.append(raw_numpad_keys_when_numlock_on)
 
     def capture_unmapped_numpad_keys(bind: Bind, e: InputEvent):
-        if e.code in numpad_key_codes and ecodes.LED_NUML not in bind.device.leds():
+        if (e.code in numpad_key_codes and
+                ecodes.LED_NUML not in bind.device.leds()):
             return False
 
     assert bind.global_after is not None
@@ -75,18 +77,23 @@ def numpad_shortcuts(bind: Bind):
         elif mode != to:
             return False
 
-    bind([k.KEY_LEFTSHIFT, k.KEY_TAB], to_key=k.KEY_KP4, on='tap', before=[lambda b, e: set_kpenter_mode('alt_tab', b, e)])
-    bind(k.KEY_TAB, to_key=k.KEY_KP5, on='tap', before=[lambda b, e: set_kpenter_mode('alt_tab', b, e)])
+    bind([k.KEY_LEFTSHIFT, k.KEY_TAB], to_key=k.KEY_KP4,
+         on='tap', before=[lambda b, e: set_kpenter_mode('alt_tab', b, e)])
+    bind(k.KEY_TAB, to_key=k.KEY_KP5,
+         on='tap', before=[lambda b, e: set_kpenter_mode('alt_tab', b, e)])
 
     # Minimize window
-    bind([k.KEY_LEFTMETA, k.KEY_PAGEDOWN], to_key=[k.KEY_KPENTER, k.KEY_KP1], on='tap', before=[lambda b, e: set_kpenter_mode('window', b, e)])
+    bind([k.KEY_LEFTMETA, k.KEY_PAGEDOWN], to_key=[k.KEY_KPENTER, k.KEY_KP1],
+         on='tap', before=[lambda b, e: set_kpenter_mode('window', b, e)])
     bind(k.KEY_ESC, to_key=k.KEY_KP1)
     # Maximize window
-    bind([k.KEY_LEFTMETA, k.KEY_PAGEUP], to_key=[k.KEY_KPENTER, k.KEY_KP2], on='tap', before=[lambda b, e: set_kpenter_mode('window', b, e)])
+    bind([k.KEY_LEFTMETA, k.KEY_PAGEUP], to_key=[k.KEY_KPENTER, k.KEY_KP2],
+         on='tap', before=[lambda b, e: set_kpenter_mode('window', b, e)])
     # Zoom out
     bind([k.KEY_LEFTMETA, k.KEY_MINUS], to_key=k.KEY_KP2, on='tap')
     # Close window
-    bind([k.KEY_LEFTALT, k.KEY_F4], to_key=[k.KEY_KPENTER, k.KEY_KP3], on='tap', before=[lambda b, e: set_kpenter_mode('window', b, e)])
+    bind([k.KEY_LEFTALT, k.KEY_F4], to_key=[k.KEY_KPENTER, k.KEY_KP3],
+         on='tap', before=[lambda b, e: set_kpenter_mode('window', b, e)])
     # Zoom in
     bind([k.KEY_LEFTMETA, k.KEY_EQUAL], to_key=k.KEY_KP3, on='tap')
 
@@ -103,7 +110,8 @@ def numpad_shortcuts(bind: Bind):
     def command_goldendict_popup(bind: Bind, _e: InputEvent):
         ps_result = subprocess.run(['flatpak', 'ps', '--columns=application'],
                                    capture_output=True, text=True)
-        running_app_ids = [line.strip() for line in ps_result.stdout.splitlines()]
+        running_app_ids = [
+            line.strip() for line in ps_result.stdout.splitlines()]
         if not 'io.github.xiaoyifang.goldendict_ng' in running_app_ids:
             return
 

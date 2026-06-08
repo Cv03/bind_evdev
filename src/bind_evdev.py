@@ -154,6 +154,8 @@ def _split_key(key: int | Sequence[int]):
 
 
 class Bind:
+    __slots__: tuple[str, ...] = ('device', 'uinput', '_remap', '_registry', 'pressed', 'trigger_timestamp', '_hold_fired', '_catch_key_up', 'data', 'global_before', 'global_after', '_remap_copilot_key', 'copilot_keystate', '_copilot_counter', '_copilot_captured_keyevents')
+
     def __init__(
         self,
         *,
@@ -176,8 +178,9 @@ class Bind:
         self.uinput: _UInput = _UInput()
 
         self._remap: dict[int, int] = dict(remap) if remap else {}
-        self._registry: defaultdict[
-            int, defaultdict[frozenset[int], defaultdict[On, _Shortcut | None]]] = defaultdict(lambda: defaultdict(defaultdict))
+        self._registry: defaultdict[int, defaultdict[
+            frozenset[int], defaultdict[On, _Shortcut | None]]] = defaultdict(
+            lambda: defaultdict(defaultdict))
 
         self.pressed: set[int] = set()
         self.trigger_timestamp: dict[int, float | None] = {}
@@ -269,21 +272,29 @@ class Bind:
                             if s := shortcuts.get('tap'):
                                 is_fire_original = s(e)
                         case KeyEvent.key_hold:
-                            if (s := shortcuts.get('hold')) and e.code not in self._hold_fired:
-                                if e.timestamp() - cast(float, self.trigger_timestamp[e.code]) > s.for_duration:
+                            if (s := shortcuts.get('hold')
+                                    ) and e.code not in self._hold_fired:
+                                if (e.timestamp() - cast(
+                                    float, self.trigger_timestamp[e.code])
+                                        > s.for_duration):
                                     is_fire_original = s(e)
                                     if not is_fire_original:
                                         self._hold_fired.add(e.code)
                         case KeyEvent.key_up:
                             if s := shortcuts.get('tap_release'):
                                 # Assume no tap is longer than 0.3 seconds.
-                                if e.timestamp() - cast(float, self.trigger_timestamp[e.code]) < 0.3:
+                                if (e.timestamp() - cast(
+                                    float, self.trigger_timestamp[e.code])
+                                        < 0.3):
                                     is_fire_original = s(e)
                             elif s := shortcuts.get('hold_release'):
-                                if e.timestamp() - cast(float, self.trigger_timestamp[e.code]) > s.for_duration:
+                                if (e.timestamp() - cast(
+                                    float, self.trigger_timestamp[e.code])
+                                        > s.for_duration):
                                     is_fire_original = s(e)
 
-                            if 'hold' in shortcuts and e.code in self._hold_fired:
+                            if ('hold' in shortcuts and
+                                    e.code in self._hold_fired):
                                 self._hold_fired.remove(e.code)
                         case _:
                             raise ValueError('_not_possible_')
@@ -338,7 +349,7 @@ class Bind:
                             capture = e.code == ecodes.KEY_LEFTMETA
                         case _:
                             capture = False
-                
+
                     if capture:
                         self._copilot_captured_keyevents.append(e)
                         self._copilot_counter += 1
@@ -381,9 +392,13 @@ class Bind:
     ):
         match len(args):
             case 1:
-                return self.inline(args[0], to_key=to_key, on=on, for_duration=for_duration, before=before, after=after)
+                return self.inline(
+                    args[0], to_key=to_key, on=on, for_duration=for_duration,
+                    before=before, after=after)
             case 0:
-                return self.decorator(to_key=to_key, on=on, for_duration=for_duration, before=before, after=after)
+                return self.decorator(
+                    to_key=to_key, on=on, for_duration=for_duration,
+                    before=before, after=after)
             case _:
                 raise TypeError('Too many positional arguments.')
 
@@ -438,7 +453,8 @@ class Bind:
     ):
         def decorator(shortcut_fn: ShortcutFn):
             trigger, modifier = _split_key(to_key)
-            shortcut = _Shortcut(self, shortcut_fn, for_duration, before, after)
+            shortcut = _Shortcut(
+                self, shortcut_fn, for_duration, before, after)
             self.trigger_timestamp[trigger] = None
             self._registry[trigger][modifier][on] = shortcut
             return shortcut
