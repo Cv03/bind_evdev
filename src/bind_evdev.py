@@ -163,6 +163,7 @@ class Bind:
         remap: Mapping[int, int] | None = None,
         global_before: Sequence[Before] | None = None,
         global_after: Sequence[After] | None = None,
+        remap_copilot_key: bool = False,  # To right ctrl.
     ):
         self.device: InputDevice[str] = cast(InputDevice[
             str], find_device(name=name, phys=phys, uniq=uniq))
@@ -179,13 +180,12 @@ class Bind:
             int, defaultdict[frozenset[int], defaultdict[On, _Shortcut | None]]] = defaultdict(lambda: defaultdict(defaultdict))
 
         self.pressed: set[int] = set()
-        self.trigger_timestamp: dict[int, float] = {}
-        # Fronzen at serving.
-        self._keep_timestamp: set[int] | frozenset[int] = set()
-        self.data: dict[Any, Any] = {  # pyright: ignore[reportExplicitAny]
-            '_hold_fired': set[int](),
-            '_catch_raw_modifiers': dict[int, frozenset[int]](),
-        }
+        self.trigger_timestamp: dict[int, float | None] = {}
+        self._hold_fired: set[int] = set()
+
+        self._catch_key_up: dict[frozenset[int], _Shortcut] = {}
+
+        self.data: dict[Any, Any] = {}  # pyright: ignore[reportExplicitAny]
 
         self.global_before: list[Before] | None = []
         if global_before:
@@ -193,6 +193,12 @@ class Bind:
         self.global_after: list[After] | None = []
         if global_after:
             self.global_after.extend(global_after)
+
+        self._remap_copilot_key: bool = remap_copilot_key
+        if self._remap_copilot_key:
+            self.copilot_keystate: int = KeyEvent.key_up
+            self._copilot_counter: int = 0
+            self._copilot_captured_keyevents: list[InputEvent] = []
 
     def _sort_shortcuts_by_modifier_number(self):
         for v in self._registry.values():
@@ -202,22 +208,108 @@ class Bind:
             for kk, vv in l:
                 v[kk] = vv
 
-    def _clean_states(self):
+    def _cleanup_states(self):
         self.pressed.clear()
-        self.trigger_timestamp.clear()
+        for k in self.trigger_timestamp:
+            self.trigger_timestamp[k] = None
+        self._hold_fired.clear()
+        self._catch_key_up.clear()
 
-        cast(set[int], self.data['_hold_fired']).clear()
-        cast(dict[int, frozenset[int]], self.data['_catch_raw_modifiers']).clear()
-        kept_data_keys = ('_hold_fired', '_catch_raw_modifiers')
+        kept_data_keys = ()
         data_keys_to_remove = (k for k in self.data if k not in kept_data_keys)  # pyright: ignore[reportAny]
         for k in data_keys_to_remove:  # pyright: ignore[reportAny]
             del self.data[k]
 
+    def _process_event(self, e: InputEvent):
+        if e.code in self._remap:
+            e.code = self._remap[e.code]
+
+        if e.value == KeyEvent.key_down:
+            self.pressed.add(e.code)
+            if e.code in self.trigger_timestamp:
+                self.trigger_timestamp[e.code] = e.timestamp()
+
+        is_fire_original = e.code not in self._registry
+
+        global_before_flag = None
+        if self.global_before:
+            for gb in self.global_before:
+                if (flag := gb(self, e)) is not None:
+                    global_before_flag = global_before_flag or flag
+            if global_before_flag is not None:
+                is_fire_original = global_before_flag
+
+        if not is_fire_original and global_before_flag is None:
+            if e.value == KeyEvent.key_up:
+                for catch_keys, raw_shortcut in self._catch_key_up.items():
+                    if e.code in catch_keys:
+                        is_fire_original = raw_shortcut(e)
+
+            for modifier, shortcuts in self._registry[e.code].items():
+                if modifier.issubset(self.pressed):
+                    if 'never' in shortcuts:
+                        break
+
+                    if s := shortcuts.get('raw'):
+                        if e.value != KeyEvent.key_up:
+                            is_fire_original = s(e)
+                            if e.value == KeyEvent.key_down:
+                                catch_keys = frozenset((e.code, *modifier))
+                                self._catch_key_up[catch_keys] = s
+                        else:
+                            catch_keys_to_remove: list[frozenset[int]] = []
+                            for catch_keys in self._catch_key_up:
+                                if e.code in catch_keys:
+                                    catch_keys_to_remove.append(catch_keys)
+                            for catch_key in catch_keys_to_remove:
+                                del self._catch_key_up[catch_key]
+
+                    match e.value:
+                        case KeyEvent.key_down:
+                            if s := shortcuts.get('tap'):
+                                is_fire_original = s(e)
+                        case KeyEvent.key_hold:
+                            if (s := shortcuts.get('hold')) and e.code not in self._hold_fired:
+                                if e.timestamp() - cast(float, self.trigger_timestamp[e.code]) > s.for_duration:
+                                    is_fire_original = s(e)
+                                    if not is_fire_original:
+                                        self._hold_fired.add(e.code)
+                        case KeyEvent.key_up:
+                            if s := shortcuts.get('tap_release'):
+                                # Assume no tap is longer than 0.3 seconds.
+                                if e.timestamp() - cast(float, self.trigger_timestamp[e.code]) < 0.3:
+                                    is_fire_original = s(e)
+                            elif s := shortcuts.get('hold_release'):
+                                if e.timestamp() - cast(float, self.trigger_timestamp[e.code]) > s.for_duration:
+                                    is_fire_original = s(e)
+
+                            if 'hold' in shortcuts and e.code in self._hold_fired:
+                                self._hold_fired.remove(e.code)
+                        case _:
+                            raise ValueError('_not_possible_')
+
+                    break
+
+        global_after_flag = None
+        if self.global_after:
+            for ga in self.global_after:
+                if (flag := ga(self, e)) is not None:
+                    global_after_flag = global_after_flag or flag
+            if global_after_flag is not None:
+                is_fire_original = global_after_flag
+
+        if is_fire_original:
+            self.uinput.raw(e.code, e.value)
+
+        if e.value == KeyEvent.key_up:
+            if e.code in self.pressed:
+                self.pressed.remove(e.code)
+            if e.code in self.trigger_timestamp:
+                self.trigger_timestamp[e.code] = None
+
     def serve(self) -> Never:  # pyright: ignore[reportReturnType]
         self._sort_shortcuts_by_modifier_number()
-        self._keep_timestamp = frozenset(self._keep_timestamp)
-
-        self._clean_states()
+        self._cleanup_states()
 
         if not self.global_before:
             self.global_before = None
@@ -229,76 +321,45 @@ class Bind:
                 if e.type != ecodes.EV_KEY:
                     continue
 
-                if e.code in self._remap:
-                    e.code = self._remap[e.code]
+                # Coplilot remap starts.
+                if self._remap_copilot_key:
+                    match e.value != KeyEvent.key_up, self._copilot_counter:
+                        case True, 0:
+                            capture = e.code == ecodes.KEY_LEFTMETA
+                        case True, 1:
+                            capture = e.code == ecodes.KEY_LEFTSHIFT
+                        case True, 2:
+                            capture = e.code == ecodes.KEY_F23
+                        case False, 0:
+                            capture = e.code == ecodes.KEY_F23
+                        case False, 1:
+                            capture = e.code == ecodes.KEY_LEFTSHIFT
+                        case False, 2:
+                            capture = e.code == ecodes.KEY_LEFTMETA
+                        case _:
+                            capture = False
+                
+                    if capture:
+                        self._copilot_captured_keyevents.append(e)
+                        self._copilot_counter += 1
 
-                if e.value == KeyEvent.key_down:
-                    self.pressed.add(e.code)
-                    if e.code in self._keep_timestamp:
-                        self.trigger_timestamp[e.code] = e.timestamp()
+                        if self._copilot_counter == 3:
+                            self.copilot_keystate = e.value
+                            e.code = ecodes.KEY_RIGHTCTRL
+                            self._process_event(e)
+                            self._copilot_captured_keyevents.clear()
+                            self._copilot_counter = 0
 
-                is_fire_original = e.code not in self._registry
+                        continue
 
-                global_before_flag = None
-                if self.global_before:
-                    for gb in self.global_before:
-                        if (flag := gb(self, e)) is not None:
-                            global_before_flag = global_before_flag or flag
-                    if global_before_flag is not None:
-                        is_fire_original = global_before_flag
+                    if self._copilot_counter > 0:
+                        for e in self._copilot_captured_keyevents:
+                            self._process_event(e)
+                        self._copilot_captured_keyevents.clear()
+                        self._copilot_counter = 0
+                # Coplilot remap ends.
 
-                if not is_fire_original and global_before_flag is None:
-                    for modifier, shortcuts in self._registry[e.code].items():
-                        if modifier.issubset(self.pressed):
-                            if 'never' in shortcuts:
-                                break
-
-                            if s := shortcuts.get('raw'):
-                                is_fire_original = s(e)
-                                self.data['_catch_raw_modifiers'][e.code] = modifier
-
-                            match e.value:
-                                case KeyEvent.key_down:
-                                    if s := shortcuts.get('tap'):
-                                        is_fire_original = s(e)
-                                case KeyEvent.key_hold:
-                                    if (s := shortcuts.get('hold')) and e.code not in self.data['_hold_fired']:
-                                        if e.timestamp() - self.trigger_timestamp[e.code] > s.for_duration:
-                                            is_fire_original = s(e)
-                                            if not is_fire_original:
-                                                cast(set[int], self.data['_hold_fired']).add(e.code)
-                                case KeyEvent.key_up:
-                                    if s := shortcuts.get('tap_release'):
-                                        # Assume no tap is longer than 0.3 seconds.
-                                        if e.timestamp() - self.trigger_timestamp[e.code] < 0.3:
-                                            is_fire_original = s(e)
-                                    elif s := shortcuts.get('hold_release'):
-                                        if e.timestamp() - self.trigger_timestamp[e.code] > s.for_duration:
-                                            is_fire_original = s(e)
-
-                                    if 'hold' in shortcuts and e.code in self.data['_hold_fired']:
-                                        cast(set[int], self.data['_hold_fired']).remove(e.code)
-                                case _:
-                                    raise ValueError('_not_possible_')
-
-                            break
-
-                global_after_flag = None
-                if self.global_after:
-                    for ga in self.global_after:
-                        if (flag := ga(self, e)) is not None:
-                            global_after_flag = global_after_flag or flag
-                    if global_after_flag is not None:
-                        is_fire_original = global_after_flag
-
-                if is_fire_original:
-                    self.uinput.raw(e.code, e.value)
-
-                if e.value == KeyEvent.key_up:
-                    if e.code in self.pressed:
-                        self.pressed.remove(e.code)
-                    if e.code in self.trigger_timestamp:
-                        del self.trigger_timestamp[e.code]
+                self._process_event(e)
         except OSError as e:
             # /usr/include/asm-generic/errno-base.h
             # #define ENODEV 19 /* No such device */
@@ -363,7 +424,7 @@ class Bind:
             else:
                 shortcut_fn = operation
         shortcut = _Shortcut(self, shortcut_fn, for_duration, before, after)
-        cast(set[int], self._keep_timestamp).add(trigger)
+        self.trigger_timestamp[trigger] = None
         self._registry[trigger][modifier][on] = shortcut
 
     def decorator(
@@ -378,10 +439,13 @@ class Bind:
         def decorator(shortcut_fn: ShortcutFn):
             trigger, modifier = _split_key(to_key)
             shortcut = _Shortcut(self, shortcut_fn, for_duration, before, after)
-            cast(set[int], self._keep_timestamp).add(trigger)
+            self.trigger_timestamp[trigger] = None
             self._registry[trigger][modifier][on] = shortcut
             return shortcut
         return decorator
+
+    def import_preset(self, preset: Callable[[Bind], None]):
+        preset(self)
 
 
 if __name__ == '__main__':
