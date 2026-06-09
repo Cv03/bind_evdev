@@ -187,7 +187,7 @@ class Bind:
         self.trigger_timestamp: dict[int, float | None] = {}
         self._hold_fired: set[int] = set()
 
-        self._capture_key_up: defaultdict[int, list[_Shortcut] | tuple[_Shortcut, ...]] = defaultdict(list)
+        self._capture_key_up: list[tuple[frozenset[int], _Shortcut]] = []
 
         self.data: dict[Any, Any] = {}  # pyright: ignore[reportExplicitAny]
 
@@ -236,9 +236,14 @@ class Bind:
                 self.trigger_timestamp[code] = e.timestamp()
 
         if value == KeyEvent.key_up:
-            if code in self._capture_key_up:
-                for s in self._capture_key_up[code]:
-                    _ = s(e)
+            captured: list[int] = []
+            for i in range(len(self._capture_key_up)):
+                key_codes, shortcut = self._capture_key_up[i]
+                if code in key_codes:
+                    _ = shortcut(e)
+                    captured.append(i)
+            for i in captured[::-1]:
+                _ = self._capture_key_up.pop(i)
 
         registry_entry = self._registry.get(code)
         is_fire_original = registry_entry is None
@@ -261,6 +266,8 @@ class Bind:
                         case KeyEvent.key_down:
                             if s := shortcuts.get('raw'):
                                 is_fire_original = s(e)
+                                self._capture_key_up.append(
+                                    (frozenset((code, *modifier)), s))
 
                             if s := shortcuts.get('tap'):
                                 is_fire_original = s(e)
@@ -350,8 +357,8 @@ class Bind:
             return True
 
         if self._copilot_counter > 0:
-            for captured_event in self._copilot_captured_events:
-                self._process_event(captured_event)
+            for event_to_replay in self._copilot_captured_events:
+                self._process_event(event_to_replay)
             self._copilot_captured_events.clear()
             self._copilot_counter = 0
 
@@ -360,9 +367,6 @@ class Bind:
     def serve(self) -> Never:  # pyright: ignore[reportReturnType]
         self._sort_shortcuts_by_modifier_number()
         self._cleanup_states()
-
-        for k in self._capture_key_up:
-            self._capture_key_up[k] = tuple(self._capture_key_up[k])
 
         if not self.global_before:
             self.global_before = None
@@ -446,10 +450,6 @@ class Bind:
                 shortcut_fn = operation
             shortcut = _Shortcut(
                 self, shortcut_fn, for_duration, before, after)
-            if on == 'raw':
-                for k in (trigger, *modifier):
-                    cast(list[_Shortcut],
-                         self._capture_key_up[k]).append(shortcut)
 
         self.trigger_timestamp[trigger] = None
         self._registry[trigger][modifier][on] = shortcut
