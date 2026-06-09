@@ -155,7 +155,7 @@ def _split_key(key: int | Sequence[int]):
 
 
 class Bind:
-    __slots__: tuple[str, ...] = ('device', 'uinput', '_remap', '_registry', 'pressed', 'trigger_timestamp', '_hold_fired', '_capture_key_up', '_capture_key_up_cache', 'data', 'global_before', 'global_after', '_remap_copilot_key', '_copilot_counter', '_copilot_captured_events')
+    __slots__: tuple[str, ...] = ('device', 'uinput', '_remap', '_registry', 'pressed', 'pressed_timestamp', '_hold_fired', '_capture_key_up', '_capture_key_up_cache', 'data', 'global_before', 'global_after', '_remap_copilot_key', '_copilot_counter', '_copilot_captured_events')
 
     def __init__(
         self,
@@ -184,7 +184,7 @@ class Bind:
             lambda: defaultdict(defaultdict))
 
         self.pressed: set[int] = set()
-        self.trigger_timestamp: dict[int, float | None] = {}
+        self.pressed_timestamp: dict[int, float] = {}
         self._hold_fired: set[int] = set()
 
         self._capture_key_up: list[tuple[frozenset[int], _Shortcut]] = []
@@ -214,8 +214,8 @@ class Bind:
 
     def _cleanup_states(self):
         self.pressed.clear()
-        for k in self.trigger_timestamp:
-            self.trigger_timestamp[k] = None
+        for k in self.pressed_timestamp:
+            self.pressed_timestamp[k] = 0
         self._hold_fired.clear()
 
         kept_data_keys = ()
@@ -233,8 +233,8 @@ class Bind:
 
         if value == KeyEvent.key_down:
             self.pressed.add(code)
-            if code in self.trigger_timestamp:
-                self.trigger_timestamp[code] = e.timestamp()
+            if code in self.pressed_timestamp:
+                self.pressed_timestamp[code] = e.timestamp()
 
         if value == KeyEvent.key_up:
             captured: list[int] = []
@@ -278,9 +278,8 @@ class Bind:
 
                             if (s := shortcuts.get('hold')
                                 ) and code not in self._hold_fired:
-                                if (e.timestamp() - cast(
-                                        float, self.trigger_timestamp[code])
-                                        > s.for_duration):
+                                if (e.timestamp() - self.pressed_timestamp[
+                                        code] > s.for_duration):
                                     is_fire_original = s(e)
                                     if not is_fire_original:
                                         self._hold_fired.add(code)
@@ -292,16 +291,14 @@ class Bind:
                             if s := shortcuts.get('tap_release'):
                                 timestamp = e.timestamp()
                                 # Assume no taps are longer than 0.3 seconds.
-                                if (timestamp - cast(
-                                    float, self.trigger_timestamp[code])
-                                        < 0.3):
+                                if (timestamp - self.pressed_timestamp[
+                                        code] < 0.3):
                                     is_fire_original = s(e)
                             elif s := shortcuts.get('hold_release'):
                                 if timestamp is None:
                                     timestamp = e.timestamp()
-                                if (timestamp - cast(
-                                    float, self.trigger_timestamp[code])
-                                        > s.for_duration):
+                                if (timestamp - self.pressed_timestamp[
+                                        code] > s.for_duration):
                                     is_fire_original = s(e)
 
                             if ('hold' in shortcuts and code in self._hold_fired):
@@ -325,8 +322,6 @@ class Bind:
         if value == KeyEvent.key_up:
             if code in self.pressed:
                 self.pressed.remove(code)
-            if code in self.trigger_timestamp:
-                self.trigger_timestamp[code] = None
 
     def _process_copilot_event(self, e: InputEvent):
         match e.value != KeyEvent.key_up, self._copilot_counter:
@@ -455,7 +450,11 @@ class Bind:
                 self._capture_key_up_cache[shortcut] = frozenset(
                     (trigger, *modifier))
 
-        self.trigger_timestamp[trigger] = None
+        # These three types of bindings require trigger key pressed timestamp.
+        # You can explicitly track any other keys as well.
+        if on in ('tap_release', 'hold', 'hold_release'):
+            self.track_pressed_timestamp(trigger)
+
         self._registry[trigger][modifier][on] = shortcut
         return shortcut
 
@@ -477,6 +476,10 @@ class Bind:
 
     def import_preset(self, preset: Callable[[Bind], None]):
         preset(self)
+
+    def track_pressed_timestamp(self, key_code: int):
+        if key_code not in self.pressed_timestamp:
+            self.pressed_timestamp[key_code] = 0
 
 
 if __name__ == '__main__':
