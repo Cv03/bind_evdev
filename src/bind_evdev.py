@@ -155,7 +155,7 @@ def _split_key(key: int | Sequence[int]):
 
 
 class Bind:
-    __slots__: tuple[str, ...] = ('device', 'uinput', '_remap', '_registry', 'pressed', 'trigger_timestamp', '_hold_fired', '_capture_key_up', 'data', 'global_before', 'global_after', '_remap_copilot_key', '_copilot_counter', '_copilot_captured_events')
+    __slots__: tuple[str, ...] = ('device', 'uinput', '_remap', '_registry', 'pressed', 'trigger_timestamp', '_hold_fired', '_capture_key_up', '_capture_key_up_cache', 'data', 'global_before', 'global_after', '_remap_copilot_key', '_copilot_counter', '_copilot_captured_events')
 
     def __init__(
         self,
@@ -188,6 +188,7 @@ class Bind:
         self._hold_fired: set[int] = set()
 
         self._capture_key_up: list[tuple[frozenset[int], _Shortcut]] = []
+        self._capture_key_up_cache: dict[_Shortcut, frozenset[int]] = {}
 
         self.data: dict[Any, Any] = {}  # pyright: ignore[reportExplicitAny]
 
@@ -267,7 +268,7 @@ class Bind:
                             if s := shortcuts.get('raw'):
                                 is_fire_original = s(e)
                                 self._capture_key_up.append(
-                                    (frozenset((code, *modifier)), s))
+                                    (self._capture_key_up_cache[s], s))
 
                             if s := shortcuts.get('tap'):
                                 is_fire_original = s(e)
@@ -450,6 +451,9 @@ class Bind:
                 shortcut_fn = operation
             shortcut = _Shortcut(
                 self, shortcut_fn, for_duration, before, after)
+            if on == 'raw':
+                self._capture_key_up_cache[shortcut] = frozenset(
+                    (trigger, *modifier))
 
         self.trigger_timestamp[trigger] = None
         self._registry[trigger][modifier][on] = shortcut
