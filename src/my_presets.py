@@ -1,4 +1,4 @@
-# pyright: reportUnusedCallResult=false, reportOptionalCall=false, reportUnusedFunction=false
+# pyright: reportUnusedCallResult=false, reportArgumentType=false, reportUnusedFunction=false
 
 import subprocess
 from time import sleep

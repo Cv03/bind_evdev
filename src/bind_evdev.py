@@ -43,6 +43,7 @@ class _UInput:
         self.raw(key_code, KeyEvent.key_down)
         sleep(0.005)
         self.raw(key_code, KeyEvent.key_up)
+        sleep(0.005)
 
     def hotkey(self, *key_codes: int):
         for key_code in key_codes:
@@ -154,7 +155,7 @@ def _split_key(key: int | Sequence[int]):
 
 
 class Bind:
-    __slots__: tuple[str, ...] = ('device', 'uinput', '_remap', '_registry', 'pressed', 'trigger_timestamp', '_hold_fired', '_catch_key_up', 'data', 'global_before', 'global_after', '_is_copilot_key_remapped', '_copilot_counter', '_copilot_captured_events')
+    __slots__: tuple[str, ...] = ('device', 'uinput', '_remap', '_registry', 'pressed', 'trigger_timestamp', '_hold_fired', '_capture_key_up', 'data', 'global_before', 'global_after', '_remap_copilot_key', '_copilot_counter', '_copilot_captured_events')
 
     def __init__(
         self,
@@ -186,7 +187,7 @@ class Bind:
         self.trigger_timestamp: dict[int, float | None] = {}
         self._hold_fired: set[int] = set()
 
-        self._catch_key_up: dict[frozenset[int], _Shortcut] = {}
+        self._capture_key_up: dict[frozenset[int], _Shortcut] = {}
 
         self.data: dict[Any, Any] = {}  # pyright: ignore[reportExplicitAny]
 
@@ -197,8 +198,8 @@ class Bind:
         if global_after:
             self.global_after.extend(global_after)
 
-        self._is_copilot_key_remapped: bool = remap_copilot_key
-        if self._is_copilot_key_remapped:
+        self._remap_copilot_key: bool = remap_copilot_key
+        if self._remap_copilot_key:
             self._copilot_counter: int = 0
             self._copilot_captured_events: list[InputEvent] = []
 
@@ -215,7 +216,6 @@ class Bind:
         for k in self.trigger_timestamp:
             self.trigger_timestamp[k] = None
         self._hold_fired.clear()
-        self._catch_key_up.clear()
 
         kept_data_keys = ()
         data_keys_to_remove = (k for k in self.data if k not in kept_data_keys)  # pyright: ignore[reportAny]
@@ -231,6 +231,12 @@ class Bind:
             if e.code in self.trigger_timestamp:
                 self.trigger_timestamp[e.code] = e.timestamp()
 
+        if e.value == KeyEvent.key_up:
+            for raw_key_up_trigger, raw_key_up_shortcut in (
+                    self._capture_key_up.items()):
+                if e.code in raw_key_up_trigger:
+                    _ = raw_key_up_shortcut(e)
+
         is_fire_original = e.code not in self._registry
 
         global_before_flag = None
@@ -242,35 +248,22 @@ class Bind:
                 is_fire_original = global_before_flag
 
         if not is_fire_original and global_before_flag is None:
-            if e.value == KeyEvent.key_up:
-                for catch_keys, shortcut in self._catch_key_up.items():
-                    if e.code in catch_keys:
-                        is_fire_original = shortcut(e)
-
             for modifier, shortcuts in self._registry[e.code].items():
                 if modifier.issubset(self.pressed):
                     if 'never' in shortcuts:
                         break
 
-                    if s := shortcuts.get('raw'):
-                        if e.value != KeyEvent.key_up:
-                            is_fire_original = s(e)
-                            if e.value == KeyEvent.key_down:
-                                catch_keys = frozenset((e.code, *modifier))
-                                self._catch_key_up[catch_keys] = s
-                        else:
-                            catch_keys_to_remove: list[frozenset[int]] = []
-                            for catch_keys in self._catch_key_up:
-                                if e.code in catch_keys:
-                                    catch_keys_to_remove.append(catch_keys)
-                            for catch_key in catch_keys_to_remove:
-                                del self._catch_key_up[catch_key]
-
                     match e.value:
                         case KeyEvent.key_down:
+                            if s := shortcuts.get('raw'):
+                                is_fire_original = s(e)
+
                             if s := shortcuts.get('tap'):
                                 is_fire_original = s(e)
                         case KeyEvent.key_hold:
+                            if s := shortcuts.get('raw'):
+                                is_fire_original = s(e)
+
                             if (s := shortcuts.get('hold')
                                     ) and e.code not in self._hold_fired:
                                 if (e.timestamp() - cast(
@@ -317,7 +310,7 @@ class Bind:
             if e.code in self.trigger_timestamp:
                 self.trigger_timestamp[e.code] = None
 
-    def _remap_copliot_key(self, e: InputEvent):
+    def _process_copliot_event(self, e: InputEvent):
         match e.value != KeyEvent.key_up, self._copilot_counter:
             case True, 0:
                 capture = e.code == ecodes.KEY_LEFTMETA
@@ -368,8 +361,7 @@ class Bind:
                 if e.type != ecodes.EV_KEY:
                     continue
 
-                if self._is_copilot_key_remapped and self._remap_copliot_key(
-                        e):
+                if self._remap_copilot_key and self._process_copliot_event(e):
                     continue
 
                 self._process_event(e)
@@ -418,31 +410,35 @@ class Bind:
         trigger, modifier = _split_key(to_key)
 
         if operation is None:
-            self._registry[trigger][modifier]['raw'] = _NoOpShortcut(
-                self, before)
-            return
-
-        if on == 'raw':
-            if isinstance(operation, int):
-                def _r(bind: Bind, e: InputEvent):
-                    bind.uinput.raw(operation, e.value)
-                shortcut_fn = _r
-            else:
-                raise TypeError('RAW shortcuts accept only int operations.')
+            shortcut = _NoOpShortcut(self, before)
         else:
             if isinstance(operation, int):
-                def _i(bind: Bind, _e: InputEvent):
-                    bind.uinput.type_(operation)
-                shortcut_fn = _i
+                if on == 'raw':
+                    def _r(bind: Bind, e: InputEvent):
+                        bind.uinput.raw(operation, e.value)
+                    shortcut_fn = _r
+                else:
+                    def _t(bind: Bind, _e: InputEvent):
+                        bind.uinput.type_(operation)
+                    shortcut_fn = _t
             elif isinstance(operation, Sequence):
-                def _si(bind: Bind, _e: InputEvent):
-                    bind.uinput.hotkey(*operation)
-                shortcut_fn = _si
+                if on == 'raw':
+                    raise TypeError(
+                        'Raw bindings do not support sequences of key codes.')
+                else:
+                    def _hk(bind: Bind, _e: InputEvent):
+                        bind.uinput.hotkey(*operation)
+                    shortcut_fn = _hk
             else:
                 shortcut_fn = operation
-        shortcut = _Shortcut(self, shortcut_fn, for_duration, before, after)
+            shortcut = _Shortcut(
+                self, shortcut_fn, for_duration, before, after)
+            if on == 'raw':
+                self._capture_key_up[frozenset((trigger, *modifier))] = shortcut
+
         self.trigger_timestamp[trigger] = None
         self._registry[trigger][modifier][on] = shortcut
+        return shortcut
 
     def decorator(
         self,
@@ -454,11 +450,9 @@ class Bind:
         after: Sequence[After] | None = None,
     ):
         def decorator(shortcut_fn: ShortcutFn):
-            trigger, modifier = _split_key(to_key)
-            shortcut = _Shortcut(
-                self, shortcut_fn, for_duration, before, after)
-            self.trigger_timestamp[trigger] = None
-            self._registry[trigger][modifier][on] = shortcut
+            shortcut = self.inline(
+                shortcut_fn, to_key=to_key, on=on, for_duration=for_duration,
+                before=before, after=after)
             return shortcut
         return decorator
 
