@@ -80,7 +80,7 @@ class _Shortcut:
             if before_flag is not None:
                 return before_flag
 
-        shourtcut_fn_flag = self.shortcut_fn(self.bind, event)
+        shortcut_fn_flag = self.shortcut_fn(self.bind, event)
 
         if self.after:
             after_flag = None
@@ -90,7 +90,7 @@ class _Shortcut:
             if after_flag is not None:
                 return after_flag
 
-        return shourtcut_fn_flag
+        return shortcut_fn_flag
 
 
 class _NoOpShortcut(_Shortcut):
@@ -187,7 +187,7 @@ class Bind:
         self.trigger_timestamp: dict[int, float | None] = {}
         self._hold_fired: set[int] = set()
 
-        self._capture_key_up: dict[frozenset[int], _Shortcut] = {}
+        self._capture_key_up: defaultdict[int, list[_Shortcut] | tuple[_Shortcut, ...]] = defaultdict(list)
 
         self.data: dict[Any, Any] = {}  # pyright: ignore[reportExplicitAny]
 
@@ -223,21 +223,25 @@ class Bind:
             del self.data[k]
 
     def _process_event(self, e: InputEvent):
-        if e.code in self._remap:
-            e.code = self._remap[e.code]
+        code = e.code
+        value = e.value
 
-        if e.value == KeyEvent.key_down:
-            self.pressed.add(e.code)
-            if e.code in self.trigger_timestamp:
-                self.trigger_timestamp[e.code] = e.timestamp()
+        if code in self._remap:
+            code = self._remap[code]
+            e.code = code
 
-        if e.value == KeyEvent.key_up:
-            for raw_key_up_trigger, raw_key_up_shortcut in (
-                    self._capture_key_up.items()):
-                if e.code in raw_key_up_trigger:
-                    _ = raw_key_up_shortcut(e)
+        if value == KeyEvent.key_down:
+            self.pressed.add(code)
+            if code in self.trigger_timestamp:
+                self.trigger_timestamp[code] = e.timestamp()
 
-        is_fire_original = e.code not in self._registry
+        if value == KeyEvent.key_up:
+            if code in self._capture_key_up:
+                for s in self._capture_key_up[code]:
+                    _ = s(e)
+
+        registry_entry = self._registry.get(code)
+        is_fire_original = registry_entry is None
 
         global_before_flag = None
         if self.global_before:
@@ -248,12 +252,12 @@ class Bind:
                 is_fire_original = global_before_flag
 
         if not is_fire_original and global_before_flag is None:
-            for modifier, shortcuts in self._registry[e.code].items():
+            for modifier, shortcuts in registry_entry.items():  # pyright: ignore[reportOptionalMemberAccess]
                 if modifier.issubset(self.pressed):
                     if 'never' in shortcuts:
                         break
 
-                    match e.value:
+                    match value:
                         case KeyEvent.key_down:
                             if s := shortcuts.get('raw'):
                                 is_fire_original = s(e)
@@ -265,29 +269,35 @@ class Bind:
                                 is_fire_original = s(e)
 
                             if (s := shortcuts.get('hold')
-                                    ) and e.code not in self._hold_fired:
+                                ) and code not in self._hold_fired:
                                 if (e.timestamp() - cast(
-                                    float, self.trigger_timestamp[e.code])
+                                        float, self.trigger_timestamp[code])
                                         > s.for_duration):
                                     is_fire_original = s(e)
                                     if not is_fire_original:
-                                        self._hold_fired.add(e.code)
+                                        self._hold_fired.add(code)
                         case KeyEvent.key_up:
+                            if shortcuts.get('raw'):
+                                is_fire_original = None
+
+                            timestamp = None
                             if s := shortcuts.get('tap_release'):
-                                # Assume no tap is longer than 0.3 seconds.
-                                if (e.timestamp() - cast(
-                                    float, self.trigger_timestamp[e.code])
+                                timestamp = e.timestamp()
+                                # Assume no taps are longer than 0.3 seconds.
+                                if (timestamp - cast(
+                                    float, self.trigger_timestamp[code])
                                         < 0.3):
                                     is_fire_original = s(e)
                             elif s := shortcuts.get('hold_release'):
-                                if (e.timestamp() - cast(
-                                    float, self.trigger_timestamp[e.code])
+                                if timestamp is None:
+                                    timestamp = e.timestamp()
+                                if (timestamp - cast(
+                                    float, self.trigger_timestamp[code])
                                         > s.for_duration):
                                     is_fire_original = s(e)
 
-                            if ('hold' in shortcuts and
-                                    e.code in self._hold_fired):
-                                self._hold_fired.remove(e.code)
+                            if ('hold' in shortcuts and code in self._hold_fired):
+                                self._hold_fired.remove(code)
                         case _:
                             raise ValueError('_not_possible_')
 
@@ -302,15 +312,15 @@ class Bind:
                 is_fire_original = global_after_flag
 
         if is_fire_original:
-            self.uinput.raw(e.code, e.value)
+            self.uinput.raw(code, value)
 
-        if e.value == KeyEvent.key_up:
-            if e.code in self.pressed:
-                self.pressed.remove(e.code)
-            if e.code in self.trigger_timestamp:
-                self.trigger_timestamp[e.code] = None
+        if value == KeyEvent.key_up:
+            if code in self.pressed:
+                self.pressed.remove(code)
+            if code in self.trigger_timestamp:
+                self.trigger_timestamp[code] = None
 
-    def _process_copliot_event(self, e: InputEvent):
+    def _process_copilot_event(self, e: InputEvent):
         match e.value != KeyEvent.key_up, self._copilot_counter:
             case True, 0:
                 capture = e.code == ecodes.KEY_LEFTMETA
@@ -340,8 +350,8 @@ class Bind:
             return True
 
         if self._copilot_counter > 0:
-            for e in self._copilot_captured_events:
-                self._process_event(e)
+            for captured_event in self._copilot_captured_events:
+                self._process_event(captured_event)
             self._copilot_captured_events.clear()
             self._copilot_counter = 0
 
@@ -350,6 +360,9 @@ class Bind:
     def serve(self) -> Never:  # pyright: ignore[reportReturnType]
         self._sort_shortcuts_by_modifier_number()
         self._cleanup_states()
+
+        for k in self._capture_key_up:
+            self._capture_key_up[k] = tuple(self._capture_key_up[k])
 
         if not self.global_before:
             self.global_before = None
@@ -361,7 +374,7 @@ class Bind:
                 if e.type != ecodes.EV_KEY:
                     continue
 
-                if self._remap_copilot_key and self._process_copliot_event(e):
+                if self._remap_copilot_key and self._process_copilot_event(e):
                     continue
 
                 self._process_event(e)
@@ -434,7 +447,9 @@ class Bind:
             shortcut = _Shortcut(
                 self, shortcut_fn, for_duration, before, after)
             if on == 'raw':
-                self._capture_key_up[frozenset((trigger, *modifier))] = shortcut
+                for k in (trigger, *modifier):
+                    cast(list[_Shortcut],
+                         self._capture_key_up[k]).append(shortcut)
 
         self.trigger_timestamp[trigger] = None
         self._registry[trigger][modifier][on] = shortcut
