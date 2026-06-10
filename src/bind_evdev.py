@@ -188,7 +188,8 @@ class Bind:
         self._hold_fired: set[int] = set()
 
         self._capture_key_up: list[tuple[frozenset[int], _Shortcut]] = []
-        self._capture_key_up_cache: dict[_Shortcut, frozenset[int]] = {}
+        self._capture_key_up_cache: dict[
+            _Shortcut, tuple[frozenset[int], _Shortcut]] = {}
 
         self.data: dict[Any, Any] = {}  # pyright: ignore[reportExplicitAny]
 
@@ -268,7 +269,7 @@ class Bind:
                             if s := shortcuts.get('raw'):
                                 is_fire_original = s(e)
                                 self._capture_key_up.append(
-                                    (self._capture_key_up_cache[s], s))
+                                    self._capture_key_up_cache[s])
 
                             if s := shortcuts.get('tap'):
                                 is_fire_original = s(e)
@@ -447,8 +448,8 @@ class Bind:
             shortcut = _Shortcut(
                 self, shortcut_fn, for_duration, before, after)
             if on == 'raw':
-                self._capture_key_up_cache[shortcut] = frozenset(
-                    (trigger, *modifier))
+                self._capture_key_up_cache[shortcut] = (
+                    frozenset((trigger, *modifier)), shortcut)
 
         # These three types of bindings require trigger key pressed timestamp.
         # You can explicitly track any other keys as well.
