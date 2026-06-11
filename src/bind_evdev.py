@@ -18,34 +18,54 @@ class _SupportsReadLoop(Protocol):
 
 
 type On = Literal['raw', 'tap', 'tap_release', 'hold', 'hold_release', 'never']
+
 type Before = Callable[[Bind, InputEvent], bool | None]
 type ShortcutFn = Callable[[Bind, InputEvent], bool | None]
 type After = Callable[[Bind, InputEvent], bool | None]
 
+# Before, ShortcutFn, and After return semantics:
 
-class _UInput:
+# Before: Return *True or False* to reject, and emit original key event if any
+# of Before returns True. Return None to pass.
+
+# ShortcutFn: Return True to emit orginal key event after the shortcut, False or
+# None otherwise.
+
+# After: The same as ShortcutFn, but overwrite ShortcutFn return if not None.
+
+
+class UInputWrapper:
+    """
+    A wrapper around evdev.UInput to provide high-level methods for emitting
+    events.
+
+    As for type hinting purposes, users should not instantiate this class.
+    """
     __slots__: tuple[str, ...] = ('_uinput',)
 
     def __init__(self):
         events = {ecodes.EV_KEY: tuple(code for code in ecodes.keys.keys() if (
             code < 288 or 318 < code < 544 or 547 < code < 704 or 743 < code))}
-        # Excluded joystick buttons [288, 318] ∪ [544, 547] ∪ [704, 743],
-        # necessary for mouse buttons support.
+        # Excluded joystick buttons in [288, 318] ∪ [544, 547] ∪ [704, 743],
+        # necessary for mouse button support.
         self._uinput: _SupportWriteAndSyn = cast(
             _SupportWriteAndSyn, UInput(
                 events=events, name='bind-evdev_virtual_device'))  # pyright:ignore[reportArgumentType]
 
     def raw(self, key_code: int, event_value: int):
+        """Send a raw key event and synchronize."""
         self._uinput.write(ecodes.EV_KEY, key_code, event_value)
         self._uinput.syn()
 
     def type_(self, key_code: int):
+        """Simulate a single key press and release."""
         self.raw(key_code, KeyEvent.key_down)
         sleep(0.005)
         self.raw(key_code, KeyEvent.key_up)
         sleep(0.005)
 
     def hotkey(self, *key_codes: int):
+        """Simulate a hotkey combination (press all, then release all in reverse)."""
         for key_code in key_codes:
             self.raw(key_code, KeyEvent.key_down)
             sleep(0.005)
@@ -54,7 +74,12 @@ class _UInput:
             sleep(0.005)
 
 
-class _Shortcut:
+class Shortcut:
+    """
+    Represents a registered shortcut and its execution logic.
+
+    As for type hinting purposes, users should not instantiate this class.
+    """
     __slots__: tuple[str, ...] = ('bind', 'for_duration', 'before', 'shortcut_fn', 'after')
 
     def __init__(
@@ -93,7 +118,7 @@ class _Shortcut:
         return shortcut_fn_flag
 
 
-class _NoOpShortcut(_Shortcut):
+class NoOpShortcut(Shortcut):
     def __init__(
         self,
         bind: Bind,
@@ -108,6 +133,22 @@ def find_device(
     phys: str | None = None,
     uniq: str | None = None
 ):
+    """
+    Find an input device by its name, physical path, or unique identifier.
+
+    Or if no arguments are provided, print a list of available devices to
+    stdout. The use is for calling the script on command line.
+
+    If multiple devices match, it prints the matches to stderr and raises a
+    ValueError.
+
+    :param name: The name of the device (e.g., 'AT Translated Set 2 keyboard').
+    :param phys: The physical path (e.g., 'isa0060/serio0/input0').
+    :param uniq: The unique identifier.
+    :return: The InputDevice instance if exactly one is found.
+    :raises ValueError: If no device is found or more than one device matches
+        the criteria.
+    """
     print_to_stdout = name is None and phys is None and uniq is None
     found_devices: list[InputDevice[str]] = []
     for path in list_devices():
@@ -155,6 +196,13 @@ def _split_key(key: int | Sequence[int]):
 
 
 class Bind:
+    """
+    The main class for remapping evdev input events.
+
+    It captures events from a physical device, applies user-defined shortcuts
+    and remappings, and emits the resulting events through a virtual UInput
+    device.
+    """
     __slots__: tuple[str, ...] = ('device', 'uinput', '_remap', '_registry', 'pressed', 'pressed_timestamp', '_hold_fired', '_capture_key_up', '_capture_key_up_cache', 'data', 'global_before', 'global_after', '_remap_copilot_key', '_copilot_counter', '_copilot_captured_events')
 
     def __init__(
@@ -168,6 +216,22 @@ class Bind:
         global_after: Sequence[After] | None = None,
         remap_copilot_key: bool = False,  # To right ctrl.
     ):
+        """
+        Initialize a Bind instance by selecting a device and setting up the
+        virtual output.
+
+        :param name: Name of the physical device to grab.
+        :param phys: Physical path of the device to grab.
+        :param uniq: Unique ID of the device to grab.
+        :param remap: A dictionary mapping input scancodes to output scancodes
+            (applied first).
+        :param global_before: A sequence of functions to run before any shortcut
+            matching.
+        :param global_after: A sequence of functions to run after shortcut
+            processing.
+        :param remap_copilot_key: If True, intercept the Windows Copilot key
+                                  sequence and remap it to Right Ctrl.
+        """
         self.device: InputDevice[str] = cast(InputDevice[
             str], find_device(name=name, phys=phys, uniq=uniq))
 
@@ -176,20 +240,20 @@ class Bind:
             sleep(0.1)
         self.device.grab()
 
-        self.uinput: _UInput = _UInput()
+        self.uinput: UInputWrapper = UInputWrapper()
 
         self._remap: dict[int, int] = dict(remap) if remap else {}
         self._registry: defaultdict[int, defaultdict[
-            frozenset[int], defaultdict[On, _Shortcut | None]]] = defaultdict(
+            frozenset[int], defaultdict[On, Shortcut | None]]] = defaultdict(
             lambda: defaultdict(defaultdict))
 
         self.pressed: set[int] = set()
         self.pressed_timestamp: dict[int, float] = {}
         self._hold_fired: set[int] = set()
 
-        self._capture_key_up: list[tuple[frozenset[int], _Shortcut]] = []
+        self._capture_key_up: list[tuple[frozenset[int], Shortcut]] = []
         self._capture_key_up_cache: dict[
-            _Shortcut, tuple[frozenset[int], _Shortcut]] = {}
+            Shortcut, tuple[frozenset[int], Shortcut]] = {}
 
         self.data: dict[Any, Any] = {}  # pyright: ignore[reportExplicitAny]
 
@@ -362,6 +426,13 @@ class Bind:
         return False
 
     def serve(self) -> Never:  # pyright: ignore[reportReturnType]
+        """
+        Start the event loop. This method grabs the device and begins processing
+        input events.
+
+        It runs indefinitely until the grabbed device lost (e.g. bluetooth
+        keyboard), or is interrupted.
+        """
         self._sort_shortcuts_by_modifier_number()
         self._cleanup_states()
 
@@ -398,6 +469,9 @@ class Bind:
         before: Sequence[Before] | None = None,
         after: Sequence[After] | None = None,
     ):
+        """
+        A unified entry point for both inline and decorator registration.
+        """
         match len(args):
             case 1:
                 return self.inline(
@@ -408,7 +482,7 @@ class Bind:
                     to_key=to_key, on=on, for_duration=for_duration,
                     before=before, after=after)
             case _:
-                raise TypeError('Too many positional arguments.')
+                raise TypeError('Accept at most one positional argument.')
 
     def inline(
         self,
@@ -421,10 +495,25 @@ class Bind:
         before: Sequence[Before] | None = None,
         after: Sequence[After] | None = None,
     ):
+        """
+        Register a shortcut function or a key mapping inline.
+
+        :param operation: The action to perform (an integer key code, a sequence
+                          of key codes for a hotkey, or a callable function). If
+                          None, it creates a no-op shortcut.
+        :param to_key: The trigger key or key sequence (modifiers + trigger).
+        :param on: When the shortcut should fire (e.g., 'raw', 'tap', 'hold').
+        :param for_duration: The duration threshold for 'hold' or 'tap'
+            detections.
+        :param before: Local 'before' hooks for this specific shortcut.
+        :param after: Local 'after' hooks for this specific shortcut.
+        :return: The created Shortcut instance.
+        :raises TypeError: if 'raw' is used with a sequence of key codes.
+        """
         trigger, modifier = _split_key(to_key)
 
         if operation is None:
-            shortcut = _NoOpShortcut(self, before)
+            shortcut = NoOpShortcut(self, before)
         else:
             if isinstance(operation, int):
                 if on == 'raw':
@@ -445,16 +534,14 @@ class Bind:
                     shortcut_fn = _hk
             else:
                 shortcut_fn = operation
-            shortcut = _Shortcut(
+            shortcut = Shortcut(
                 self, shortcut_fn, for_duration, before, after)
             if on == 'raw':
                 self._capture_key_up_cache[shortcut] = (
                     frozenset((trigger, *modifier)), shortcut)
 
-        # These three types of bindings require trigger key pressed timestamp.
-        # You can explicitly track any other keys as well.
         if on in ('tap_release', 'hold', 'hold_release'):
-            self.track_pressed_timestamp(trigger)
+            self.record_pressed_timestamp(trigger)
 
         self._registry[trigger][modifier][on] = shortcut
         return shortcut
@@ -468,6 +555,17 @@ class Bind:
         before: Sequence[Before] | None = None,
         after: Sequence[After] | None = None,
     ):
+        """
+        Register a shortcut function by decorator.
+
+        Usage:
+
+        ```py
+        @bind.decorator(to_key=ecodes.KEY_F1, on='tap')
+        def my_shortcut(bind, event):
+            ...
+        ```
+        """
         def decorator(shortcut_fn: ShortcutFn):
             shortcut = self.inline(
                 shortcut_fn, to_key=to_key, on=on, for_duration=for_duration,
@@ -476,9 +574,19 @@ class Bind:
         return decorator
 
     def import_preset(self, preset: Callable[[Bind], None]):
+        """
+        Apply a preset configuration function to this Bind instance.
+        """
         preset(self)
 
-    def track_pressed_timestamp(self, key_code: int):
+    def record_pressed_timestamp(self, key_code: int):
+        """
+        If recorded by this method, the last pressed timestamp of the key will
+        be available in `bind.pressed_timestamp`.
+
+        'tap_release', 'hold', and 'hold_release' bindings have trigger key
+        recorded automatically. Users can explicitly record other keys as well.
+        """
         if key_code not in self.pressed_timestamp:
             self.pressed_timestamp[key_code] = 0
 

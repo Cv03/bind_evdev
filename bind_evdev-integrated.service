@@ -1,0 +1,11 @@
+[Unit]
+Description=my_py_evdev sub keyboard daemon
+After=xdg-desktop-autostart.target
+
+[Service]
+WorkingDirectory=/home/trollge012/Workshop/bind_evdev
+ExecStart=python -m src.integrated
+Nice=-20
+
+[Install]
+WantedBy=default.target
