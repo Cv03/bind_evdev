@@ -26,12 +26,13 @@ type After = Callable[[Bind, InputEvent], bool | None]
 # Before, ShortcutFn, and After return semantics:
 
 # Before: Return *True or False* to reject, and emit original key event if any
-# of Before returns True. Return None to pass.
+# True returned. Return None to pass.
 
 # ShortcutFn: Return True to emit orginal key event after the shortcut, False or
 # None otherwise.
 
-# After: The same as ShortcutFn, but overwrite ShortcutFn return if not None.
+# After: The same as ShortcutFn, but overwrite ShortcutFn return if any non-None
+# returned.
 
 
 class UInputWrapper:
