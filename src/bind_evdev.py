@@ -307,12 +307,12 @@ class Bind:
 
         if value == KeyEvent.key_up:
             captured: list[int] = []
-            for i in range(len(self._capture_key_up)):
+            for i in range(len(self._capture_key_up) - 1, -1, -1):
                 key_codes, shortcut = self._capture_key_up[i]
                 if code in key_codes:
                     _ = shortcut(e)
                     captured.append(i)
-            for i in captured[::-1]:
+            for i in captured:
                 _ = self._capture_key_up.pop(i)
 
         registry_entry = self._registry.get(code)
@@ -363,7 +363,7 @@ class Bind:
                                 if (timestamp - self.pressed_timestamp[
                                         code] < 0.3):
                                     is_fire_original = s(e)
-                            elif s := shortcuts.get('hold_release'):
+                            if s := shortcuts.get('hold_release'):
                                 if timestamp is None:
                                     timestamp = e.timestamp()
                                 if (timestamp - self.pressed_timestamp[
@@ -459,7 +459,7 @@ class Bind:
                 # #define ENODEV 19 /* No such device */
                 if e.args[0] == 19:
                     if self._regrab_on_bluetooth_reconnection:
-                        command = ['./wait_for_bt_connection.sh']
+                        command = ['./wait_for_bt_conn.sh']
                         if 'name' in self._device_spec:
                             command.append(
                                 f'--name={self._device_spec['name']}')

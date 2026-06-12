@@ -4,10 +4,12 @@ while [[ -n $1 ]]; do
     case "$1" in
         --name=* )
             name="${1#--name=}"
+            name_pattern="s +\"$name\""
             ;;
         --address=* )
             address="${1#--address=}"
             address=${address^^}
+            address_pattern="s +\"$address\""
             ;;
         * )
             break
@@ -36,13 +38,13 @@ while read -r line; do
         if [[ "$val_line" == *"boolean true"* ]]; then
             if [[ -n $name ]]; then
                 device_name="$(busctl --system get-property org.bluez "$device_path" org.bluez.Device1 Name)"
-                if [[ "s \"$name\"" != $device_name ]]; then
+                if [[ ! $device_name =~ $name_pattern ]]; then
                     continue
                 fi
             fi
             if [[ -n $address ]]; then
                 device_address="$(busctl --system get-property org.bluez "$device_path" org.bluez.Device1 Address)"
-                if [[ "s \"$address\"" != $device_address ]]; then
+                if [[ ! $device_address =~ $address_pattern ]]; then
                     continue
                 fi
             fi
