@@ -1,3 +1,4 @@
+import subprocess
 from typing import Protocol, cast, Any, Never, Callable, Literal
 from sys import stderr
 from collections import defaultdict
@@ -131,7 +132,6 @@ class NoOpShortcut(Shortcut):
 def find_device(
     *,
     name: str | None = None,
-    phys: str | None = None,
     uniq: str | None = None
 ):
     """
@@ -150,17 +150,15 @@ def find_device(
     :raises ValueError: If no device is found or more than one device matches
         the criteria.
     """
-    print_to_stdout = name is None and phys is None and uniq is None
+    print_to_stdout = name is None and uniq is None
     found_devices: list[InputDevice[str]] = []
     for path in list_devices():
         device = InputDevice[str](path)
         if print_to_stdout:
-            print(f"name='{device.name}', phys='{(
-                device.phys)}', uniq='{device.uniq}'")
+            print(f"name='{device.name}', uniq='{device.uniq}'")
         else:
             if (name is None or name == device.name) and (
-                    phys is None or phys == device.phys) and (
-                        uniq is None or uniq == device.uniq):
+                    uniq is None or uniq == device.uniq):
                 found_devices.append(device)
     if not print_to_stdout:
         match len(found_devices):
@@ -170,8 +168,6 @@ def find_device(
                 fields: list[str] = []
                 if name is not None:
                     fields.append(f"name='{name}'")
-                if phys is not None:
-                    fields.append(f"phys='{phys}'")
                 if uniq is not None:
                     fields.append(f"uniq='{uniq}'")
 
@@ -179,8 +175,8 @@ def find_device(
                 raise ValueError(error_message)
             case _:
                 for device in found_devices:
-                    print(f"name='{device.name}', phys='{(
-                        device.phys)}', uniq='{device.uniq}'", file=stderr)
+                    print(f"name='{device.name}', uniq='{device.uniq}'",
+                          file=stderr)
                 raise ValueError('More than one device found.')
 
 
@@ -204,18 +200,18 @@ class Bind:
     and remappings, and emits the resulting events through a virtual UInput
     device.
     """
-    __slots__: tuple[str, ...] = ('device', 'uinput', '_remap', '_registry', 'pressed', 'pressed_timestamp', '_hold_fired', '_capture_key_up', '_capture_key_up_cache', 'data', 'global_before', 'global_after', '_remap_copilot_key', '_copilot_counter', '_copilot_captured_events')
+    __slots__: tuple[str, ...] = ('device', 'uinput', '_remap', '_registry', 'pressed', 'pressed_timestamp', '_hold_fired', '_capture_key_up', '_capture_key_up_cache', 'data', 'global_before', 'global_after', '_remap_copilot_key', '_copilot_counter', '_copilot_captured_events', '_regrab_on_bluetooth_reconnection', '_device_spec')
 
     def __init__(
         self,
         *,
         name: str | None = None,
-        phys: str | None = None,
         uniq: str | None = None,
         remap: Mapping[int, int] | None = None,
         global_before: Sequence[Before] | None = None,
         global_after: Sequence[After] | None = None,
-        remap_copilot_key: bool = False,  # To right ctrl.
+        remap_copilot_key: bool = False,
+        regrab_on_bluetooth_reconnection: bool = False,
     ):
         """
         Initialize a Bind instance by selecting a device and setting up the
@@ -232,14 +228,17 @@ class Bind:
             processing.
         :param remap_copilot_key: If True, intercept the Windows Copilot key
                                   sequence and remap it to Right Ctrl.
+        :param regrab_on_bluetooth_reconnection: If True, `serve()` will not
+            exit upon device lost (ENODEV). Instead, it waits for reconnection
+            using helper script `wait_for_bt_connection.sh` and re-grabs the
+            device.
         """
-        self.device: InputDevice[str] = cast(InputDevice[
-            str], find_device(name=name, phys=phys, uniq=uniq))
-
-        # Wait until device idle.
-        while self.device.active_keys():
-            sleep(0.1)
-        self.device.grab()
+        self._device_spec: dict[str, str] = {}
+        if name:
+            self._device_spec['name'] = name
+        if uniq:
+            self._device_spec['uniq'] = uniq
+        self._grab_device()
 
         self.uinput: UInputWrapper = UInputWrapper()
 
@@ -270,6 +269,16 @@ class Bind:
             self._copilot_counter: int = 0
             self._copilot_captured_events: list[InputEvent] = []
 
+        self._regrab_on_bluetooth_reconnection: bool = regrab_on_bluetooth_reconnection
+
+    def _grab_device(self):
+        self.device: InputDevice[str] = cast(InputDevice[
+            str], find_device(**self._device_spec))
+        # Wait until device idle.
+        while self.device.active_keys():
+            sleep(0.1)
+        self.device.grab()
+
     def _sort_shortcuts_by_modifier_number(self):
         for v in self._registry.values():
             l = [(kk, vv) for kk, vv in v.items()]
@@ -283,11 +292,7 @@ class Bind:
         for k in self.pressed_timestamp:
             self.pressed_timestamp[k] = 0
         self._hold_fired.clear()
-
-        kept_data_keys = ()
-        data_keys_to_remove = (k for k in self.data if k not in kept_data_keys)  # pyright: ignore[reportAny]
-        for k in data_keys_to_remove:  # pyright: ignore[reportAny]
-            del self.data[k]
+        self.data.clear()
 
     def _process_event(self, e: InputEvent):
         code = e.code
@@ -343,7 +348,7 @@ class Bind:
                                 is_fire_original = s(e)
 
                             if (s := shortcuts.get('hold')
-                                ) and code not in self._hold_fired:
+                                    ) and code not in self._hold_fired:
                                 if (e.timestamp() - self.pressed_timestamp[
                                         code] > s.for_duration):
                                     is_fire_original = s(e)
@@ -426,7 +431,7 @@ class Bind:
 
         return False
 
-    def serve(self) -> Never:  # pyright: ignore[reportReturnType]
+    def serve(self) -> Never:
         """
         Start the event loop. This method grabs the device and begins processing
         input events.
@@ -435,31 +440,44 @@ class Bind:
         keyboard), or is interrupted.
         """
         self._sort_shortcuts_by_modifier_number()
-        self._cleanup_states()
 
         if not self.global_before:
             self.global_before = None
         if not self.global_after:
             self.global_after = None
 
-        try:
-            for e in cast(_SupportsReadLoop, self.device).read_loop():
-                if e.type != ecodes.EV_KEY:
-                    continue
-
-                if self._remap_copilot_key and self._process_copilot_event(e):
-                    continue
-
-                self._process_event(e)
-        except OSError as e:
-            # /usr/include/asm-generic/errno-base.h
-            # #define ENODEV 19 /* No such device */
-            if e.args[0] == 19:
+        while True:
+            self._cleanup_states()
+            try:
+                for e in cast(_SupportsReadLoop, self.device).read_loop():
+                    if e.type != ecodes.EV_KEY:
+                        continue
+                    if self._remap_copilot_key and self._process_copilot_event(
+                            e):
+                        continue
+                    self._process_event(e)
+            except OSError as e:
+                # /usr/include/asm-generic/errno-base.h
+                # #define ENODEV 19 /* No such device */
+                if e.args[0] == 19:
+                    if self._regrab_on_bluetooth_reconnection:
+                        command = ['./wait_for_bt_connection.sh']
+                        if 'name' in self._device_spec:
+                            command.append(
+                                f'--name={self._device_spec['name']}')
+                        if 'uniq' in self._device_spec:
+                            command.append(
+                                f'--address={self._device_spec['uniq']}')
+                        _ = subprocess.run(command, check=True)
+                        sleep(3)
+                        self._grab_device()
+                        continue
+                    else:
+                        exit()
+                else:
+                    raise
+            except KeyboardInterrupt:
                 exit()
-            else:
-                raise
-        except KeyboardInterrupt:
-            exit()
 
     def __call__(
         self,
