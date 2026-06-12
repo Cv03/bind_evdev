@@ -144,7 +144,6 @@ def find_device(
     ValueError.
 
     :param name: The name of the device (e.g., 'AT Translated Set 2 keyboard').
-    :param phys: The physical path (e.g., 'isa0060/serio0/input0').
     :param uniq: The unique identifier.
     :return: The InputDevice instance if exactly one is found.
     :raises ValueError: If no device is found or more than one device matches
@@ -218,7 +217,6 @@ class Bind:
         virtual output.
 
         :param name: Name of the physical device to grab.
-        :param phys: Physical path of the device to grab.
         :param uniq: Unique ID of the device to grab.
         :param remap: A dictionary mapping input scancodes to output scancodes
             (applied first).
@@ -469,9 +467,8 @@ class Bind:
                             command.append(
                                 f'--address={self._device_spec['uniq']}')
                         _ = subprocess.run(command, check=True)
-                        sleep(3)
+                        sleep(2)
                         self._grab_device()
-                        continue
                     else:
                         exit()
                 else:
