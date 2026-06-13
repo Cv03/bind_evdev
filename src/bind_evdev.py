@@ -32,16 +32,17 @@ type After = Callable[[Bind, InputEvent], bool | None]
 # ShortcutFn: Return True to emit orginal key event after the shortcut, False or
 # None otherwise.
 
-# After: The same as ShortcutFn, but overwrite ShortcutFn return if any non-None
+# After: Same as ShortcutFn, but overwrite ShortcutFn return if any non-None
 # returned.
 
 
 class UInputWrapper:
     """
     A wrapper around evdev.UInput to provide high-level methods for emitting
-    events.
+    events. Access its methods via `bind.uinput`.
 
-    As for type hinting purposes, users should not instantiate this class.
+    The class is visible for type-hinting purposes. Users should not
+    instantiate.
     """
     __slots__: tuple[str, ...] = ('_uinput',)
 
@@ -80,9 +81,11 @@ class Shortcut:
     """
     Represents a registered shortcut and its execution logic.
 
-    As for type hinting purposes, users should not instantiate this class.
+    The class is visible for type-hinting purposes. Users should not
+    instantiate.
     """
-    __slots__: tuple[str, ...] = ('bind', 'for_duration', 'before', 'shortcut_fn', 'after')
+    __slots__: tuple[str, ...] = (
+        'bind', 'for_duration', 'before', 'shortcut_fn', 'after')
 
     def __init__(
         self,
@@ -199,7 +202,12 @@ class Bind:
     and remappings, and emits the resulting events through a virtual UInput
     device.
     """
-    __slots__: tuple[str, ...] = ('device', 'uinput', '_remap', '_registry', 'pressed', 'pressed_timestamp', '_hold_fired', '_capture_key_up', '_capture_key_up_cache', 'data', 'global_before', 'global_after', '_remap_copilot_key', '_copilot_counter', '_copilot_captured_events', '_regrab_on_bluetooth_reconnection', '_device_spec')
+    __slots__: tuple[str, ...] = (
+        'device', 'uinput', '_remap', '_registry', 'pressed',
+        'pressed_timestamp', '_hold_fired', '_capture_key_up',
+        '_capture_key_up_cache', 'data', 'global_before', 'global_after',
+        '_remap_copilot_key', '_copilot_counter', '_copilot_captured_events',
+        '_regrab_on_bluetooth_reconnection', '_device_spec')
 
     def __init__(
         self,
