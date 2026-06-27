@@ -19,7 +19,7 @@ while [[ -n $1 ]]; do
 done
 
 if [[ -z $name && -z $address ]]; then
-    echo 'Supported criteria: name, address. Specify one at least.' >&2
+    echo 'Supported criteria: name, address. Specify at least one.' >&2
     exit 1
 fi
 

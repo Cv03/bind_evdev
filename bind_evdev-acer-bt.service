@@ -4,7 +4,7 @@ After=xdg-desktop-autostart.target
 
 [Service]
 WorkingDirectory=/home/trollge012/Workshop/bind_evdev
-ExecStart=python -m src.acer_bt
+ExecStart=python -m bind.acer_bt
 Nice=-20
 
 [Install]

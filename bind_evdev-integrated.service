@@ -4,7 +4,7 @@ After=xdg-desktop-autostart.target
 
 [Service]
 WorkingDirectory=/home/trollge012/Workshop/bind_evdev
-ExecStart=python -m src.integrated
+ExecStart=python -m bind.integrated
 Nice=-20
 
 [Install]

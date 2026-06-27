@@ -1,4 +1,3 @@
-import subprocess
 from typing import Protocol, cast, Any, Never, Callable, Literal
 from sys import stderr
 from collections import defaultdict
@@ -9,7 +8,7 @@ from evdev import KeyEvent, ecodes, InputEvent, UInput, InputDevice
 from evdev import list_devices  # pyright:ignore[reportUnknownVariableType]
 
 
-class _SupportWriteAndSyn(Protocol):
+class _SupportsWriteAndSyn(Protocol):
     def write(self, etype: int, code: int, value: int) -> None: ...
     def syn(self) -> None: ...
 
@@ -36,6 +35,11 @@ type After = Callable[[Bind, InputEvent], bool | None]
 # returned.
 
 
+class BluetoothWatchdog(Protocol):
+    def __call__(
+        self, name: str | None = None, uniq: str | None = None) -> None: ...
+
+
 class UInputWrapper:
     """
     A wrapper around evdev.UInput to provide high-level methods for emitting
@@ -51,8 +55,8 @@ class UInputWrapper:
             code < 288 or 318 < code < 544 or 547 < code < 704 or 743 < code))}
         # Excluded joystick buttons in [288, 318] ∪ [544, 547] ∪ [704, 743],
         # necessary for mouse button support.
-        self._uinput: _SupportWriteAndSyn = cast(
-            _SupportWriteAndSyn, UInput(
+        self._uinput: _SupportsWriteAndSyn = cast(
+            _SupportsWriteAndSyn, UInput(
                 events=events, name='bind-evdev_virtual_device'))  # pyright:ignore[reportArgumentType]
 
     def raw(self, key_code: int, event_value: int):
@@ -206,8 +210,9 @@ class Bind:
         'device', 'uinput', '_remap', '_registry', 'pressed',
         'pressed_timestamp', '_hold_fired', '_capture_key_up',
         '_capture_key_up_cache', 'data', 'global_before', 'global_after',
-        '_remap_copilot_key', '_copilot_counter', '_copilot_captured_events',
-        '_regrab_on_bluetooth_reconnection', '_device_spec')
+        '_remap_copilot_key_to', '_copilot_counter',
+        '_copilot_captured_events', '_regrab_on_bluetooth_reconnection',
+        '_device_spec', '_bluetooth_watchdog')
 
     def __init__(
         self,
@@ -217,27 +222,33 @@ class Bind:
         remap: Mapping[int, int] | None = None,
         global_before: Sequence[Before] | None = None,
         global_after: Sequence[After] | None = None,
-        remap_copilot_key: bool = False,
+        remap_copilot_key_to: int | None = None,
         regrab_on_bluetooth_reconnection: bool = False,
+        bluetooth_watchdog: BluetoothWatchdog | None = None,
     ):
         """
         Initialize a Bind instance by selecting a device and setting up the
         virtual output.
 
         :param name: Name of the physical device to grab.
-        :param uniq: Unique ID of the device to grab.
-        :param remap: A dictionary mapping input scancodes to output scancodes
-            (applied first).
+        :param uniq: Address of the physical device, usually present on blutooth
+            keyboards.
+        :param remap: A dictionary mapping input scancodes to output scancodes.
+            This apply before any before functions and shortcuts.
         :param global_before: A sequence of functions to run before any shortcut
             matching.
         :param global_after: A sequence of functions to run after shortcut
             processing.
-        :param remap_copilot_key: If True, intercept the Windows Copilot key
-                                  sequence and remap it to Right Ctrl.
-        :param regrab_on_bluetooth_reconnection: If True, `serve()` will not
-            exit upon device lost (ENODEV). Instead, it waits for reconnection
-            using helper script `wait_for_bt_connection.sh` and re-grabs the
-            device.
+        :param remap_copilot_key_to: If provided, remap the Windows Copilot key
+            to the given scancode, e.g., `ecodes.KEY_RIGHTCTRL`.
+        :param regrab_on_bluetooth_reconnection: If True, a lost device
+            connection (ENODEV) will not cause `serve()` to exit. Instead,
+            `serve()` will wait on the watchdog function and re-`grab()`. This
+            ability is mainly used on bluetooth keyboards, hence the name.
+        :param bluetooth_watchdog: A function that takes device name and/or uniq
+            and return upon successful device connection. If `None` and
+            `regrab_on_bluetooth_reconnection` is `True`, `serve()` will
+            continuously reattempt to `grab()` in 2-second intervals.
         """
         self._device_spec: dict[str, str] = {}
         if name:
@@ -270,16 +281,18 @@ class Bind:
         if global_after:
             self.global_after.extend(global_after)
 
-        self._remap_copilot_key: bool = remap_copilot_key
-        if self._remap_copilot_key:
+        self._remap_copilot_key_to: int | None = remap_copilot_key_to
+        if self._remap_copilot_key_to is not None:
             self._copilot_counter: int = 0
             self._copilot_captured_events: list[InputEvent] = []
 
-        self._regrab_on_bluetooth_reconnection: bool = regrab_on_bluetooth_reconnection
+        self._regrab_on_bluetooth_reconnection: bool = (
+            regrab_on_bluetooth_reconnection)
+        self._bluetooth_watchdog: BluetoothWatchdog | None = bluetooth_watchdog
 
     def _grab_device(self):
-        self.device: InputDevice[str] = cast(InputDevice[
-            str], find_device(**self._device_spec))
+        self.device: InputDevice[str] = cast(
+            InputDevice[str], find_device(**self._device_spec))
         # Wait until device idle.
         while self.device.active_keys():
             sleep(0.1)
@@ -397,8 +410,7 @@ class Bind:
             self.uinput.raw(code, value)
 
         if value == KeyEvent.key_up:
-            if code in self.pressed:
-                self.pressed.remove(code)
+            self.pressed.discard(code)
 
     def _process_copilot_event(self, e: InputEvent):
         match e.value != KeyEvent.key_up, self._copilot_counter:
@@ -422,7 +434,7 @@ class Bind:
             self._copilot_counter += 1
 
             if self._copilot_counter == 3:
-                e.code = ecodes.KEY_RIGHTCTRL
+                e.code = cast(int, self._remap_copilot_key_to)
                 self._process_event(e)
                 self._copilot_captured_events.clear()
                 self._copilot_counter = 0
@@ -458,8 +470,8 @@ class Bind:
                 for e in cast(_SupportsReadLoop, self.device).read_loop():
                     if e.type != ecodes.EV_KEY:
                         continue
-                    if self._remap_copilot_key and self._process_copilot_event(
-                            e):
+                    if (self._remap_copilot_key_to is not None and
+                            self._process_copilot_event(e)):
                         continue
                     self._process_event(e)
             except OSError as e:
@@ -467,17 +479,20 @@ class Bind:
                 # #define ENODEV 19 /* No such device */
                 if e.args[0] == 19:
                     if self._regrab_on_bluetooth_reconnection:
-                        command = ['./wait_for_bt_conn.sh']
-                        if 'name' in self._device_spec:
-                            command.append(
-                                f'--name={self._device_spec['name']}')
-                        if 'uniq' in self._device_spec:
-                            command.append(
-                                f'--address={self._device_spec['uniq']}')
-                        _ = subprocess.run(command, check=True)
-                        sleep(2)
-                        self._grab_device()
+                        if self._bluetooth_watchdog is not None:
+                            self._bluetooth_watchdog(**self._device_spec)
+                            sleep(2)
+                            self._grab_device()
+                        else:
+                            while True:
+                                try:
+                                    sleep(2)
+                                    self._grab_device()
+                                    break
+                                except ValueError:
+                                    pass
                     else:
+                        print('Device connection lost. Exit.')
                         exit()
                 else:
                     raise

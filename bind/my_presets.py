@@ -3,6 +3,9 @@
 import subprocess
 from time import sleep
 from evdev import ecodes, InputEvent, KeyEvent
+from typing import TYPE_CHECKING
+from importlib import import_module
+
 from .bind_evdev import Bind
 
 
@@ -127,3 +130,97 @@ def numpad_shortcuts(bind: Bind):
                  '--popup', run_result.stdout])
 
     bind([k.KEY_LEFTMETA, k.KEY_V], to_key=k.KEY_KPDOT, on='tap')
+
+
+def helper_script_watchdog(name: str | None = None, uniq: str | None = None):
+    command = ['./wait_for_bt_conn.sh']
+    if name is not None:
+        command.append(f'--name={name}')
+    if uniq is not None:
+        command.append(f'--address={uniq}')
+    _ = subprocess.run(command, check=True)
+
+
+def system_bus_watchdog(name: str | None = None, uniq: str | None = None):
+    if TYPE_CHECKING:
+        import asyncio
+        from asyncio import Task
+        from typing import Any, Protocol, cast
+        from dbus_next.aio.message_bus import MessageBus
+        from dbus_next.constants import BusType
+        from dbus_next.message import Message
+        from dbus_next.signature import Variant
+    else:
+        asyncio = import_module('asyncio')
+        Task = asyncio.Task
+        typing = import_module('typing')
+        Any = typing.Any
+        Protocol = typing.Protocol
+        cast = typing.cast
+        dbus_next = import_module('dbus_next')
+        MessageBus = dbus_next.aio.message_bus.MessageBus
+        BusType = dbus_next.constants.BusType
+        Message = dbus_next.message.Message
+        Variant = dbus_next.signature.Variant
+
+    tasks = set[Task[Any]]()  # pyright: ignore[reportExplicitAny]
+
+    class SupportsGetNameAndGetAddress(Protocol):
+        async def get_name(self) -> str: ...
+        async def get_address(self) -> str: ...
+
+    async def disconnect_sys_bus_on_bt_keyboard_connection(
+            sys_bus: MessageBus, path: str):
+        introspect = await sys_bus.introspect('org.bluez', path)
+        proxy_object = sys_bus.get_proxy_object('org.bluez', path, introspect)
+        interface = cast(SupportsGetNameAndGetAddress, cast(
+            object, proxy_object.get_interface('org.bluez.Device1')))
+
+        if name is not None:
+            device_name = await interface.get_name()
+            if device_name != name:
+                return
+
+        if uniq is not None:
+            device_address = await interface.get_address()
+            # Uppercase address as per dbus specification.
+            if device_address != uniq.upper():
+                return
+
+        sys_bus.disconnect()
+
+    async def watchdog():
+        sys_bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+
+        match_rule = "type='signal',sender='org.bluez',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged'"
+        _ = await sys_bus.call(
+            Message(
+                destination="org.freedesktop.DBus",
+                path="/org/freedesktop/DBus",
+                interface="org.freedesktop.DBus",
+                member="AddMatch",
+                signature="s",
+                body=[match_rule],
+            )
+        )
+
+        def message_handler(message: Message):
+            body = message.body
+            path = message.path
+
+            if len(body) < 2 or body[0] != 'org.bluez.Device1':
+                return
+
+            connected_variant = cast(dict[str, Variant], body[1]).get('Connected')
+            if connected_variant and cast(bool, connected_variant.value):
+                task = asyncio.create_task(
+                    disconnect_sys_bus_on_bt_keyboard_connection(
+                        sys_bus, path))
+                tasks.add(task)
+                task.add_done_callback(tasks.discard)
+
+        sys_bus.add_message_handler(message_handler)
+
+        await sys_bus.wait_for_disconnect()
+
+    asyncio.run(watchdog())
