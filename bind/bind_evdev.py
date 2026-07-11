@@ -248,7 +248,7 @@ class Bind:
         :param bluetooth_watchdog: A function that takes device name and/or uniq
             and return upon successful device connection. If `None` and
             `regrab_on_bluetooth_reconnection` is `True`, `serve()` will
-            continuously reattempt to `grab()` in 2-second intervals.
+            continuously reattempt to `grab()` in 3-second intervals.
         """
         self._device_spec: dict[str, str] = {}
         if name:
@@ -367,7 +367,7 @@ class Bind:
                                 is_fire_original = s(e)
 
                             if (s := shortcuts.get('hold')
-                                    ) and code not in self._hold_fired:
+                                ) and code not in self._hold_fired:
                                 if (e.timestamp() - self.pressed_timestamp[
                                         code] > s.for_duration):
                                     is_fire_original = s(e)
@@ -412,8 +412,10 @@ class Bind:
         if value == KeyEvent.key_up:
             self.pressed.discard(code)
 
-    def _process_copilot_event(self, e: InputEvent):
-        match e.value != KeyEvent.key_up, self._copilot_counter:
+    def _process_copilot_event(self, e: InputEvent, remap_copilot_key_to: int):
+        copilot_counter = self._copilot_counter
+
+        match e.value != KeyEvent.key_up, copilot_counter:
             case True, 0:
                 capture = e.code == ecodes.KEY_LEFTMETA
             case True, 1:
@@ -430,21 +432,23 @@ class Bind:
                 capture = False
 
         if capture:
-            self._copilot_captured_events.append(e)
-            self._copilot_counter += 1
+            copilot_counter += 1
 
-            if self._copilot_counter == 3:
-                e.code = cast(int, self._remap_copilot_key_to)
+            if copilot_counter == 3:
+                e.code = remap_copilot_key_to
                 self._process_event(e)
                 self._copilot_captured_events.clear()
                 self._copilot_counter = 0
-
+            else:
+                self._copilot_captured_events.append(e)
+                self._copilot_counter = copilot_counter
             return True
 
-        if self._copilot_counter > 0:
-            for event_to_replay in self._copilot_captured_events:
+        if copilot_counter > 0:
+            copilot_captured_events = self._copilot_captured_events
+            for event_to_replay in copilot_captured_events:
                 self._process_event(event_to_replay)
-            self._copilot_captured_events.clear()
+            copilot_captured_events.clear()
             self._copilot_counter = 0
 
         return False
@@ -466,12 +470,14 @@ class Bind:
 
         while True:
             self._cleanup_states()
+            remap_copilot_key_to = self._remap_copilot_key_to
             try:
                 for e in cast(_SupportsReadLoop, self.device).read_loop():
                     if e.type != ecodes.EV_KEY:
                         continue
-                    if (self._remap_copilot_key_to is not None and
-                            self._process_copilot_event(e)):
+                    if (remap_copilot_key_to is not None and
+                            self._process_copilot_event(
+                                e, remap_copilot_key_to)):
                         continue
                     self._process_event(e)
             except OSError as e:
@@ -481,12 +487,12 @@ class Bind:
                     if self._regrab_on_bluetooth_reconnection:
                         if self._bluetooth_watchdog is not None:
                             self._bluetooth_watchdog(**self._device_spec)
-                            sleep(2)
+                            sleep(3)
                             self._grab_device()
                         else:
                             while True:
                                 try:
-                                    sleep(2)
+                                    sleep(3)
                                     self._grab_device()
                                     break
                                 except ValueError:
