@@ -84,6 +84,12 @@ def numpad_shortcuts(bind: Bind):
     bind(k.KEY_TAB, to_key=k.KEY_KP5,
          on='tap', before=[lambda b, e: set_kpenter_mode('alt_tab', b, e)])
 
+    @bind(to_key=k.KEY_KP5, on='hold', for_duration=3)
+    def toggle_scroll_on_button_down(_bind: Bind, _e: InputEvent):
+        subprocess.run(('busctl', '--user', 'call', 'localhost.MyService',
+                        '/localhost/MyService', 'MyService.Input',
+                        'ToggleScrollOnButtonDown'))
+
     # Minimize window
     bind([k.KEY_LEFTMETA, k.KEY_PAGEDOWN], to_key=[k.KEY_KPENTER, k.KEY_KP1],
          on='tap', before=[lambda b, e: set_kpenter_mode('window', b, e)])
