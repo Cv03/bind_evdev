@@ -81,15 +81,35 @@ def numpad_shortcuts(bind: Bind):
 
     bind([k.KEY_LEFTSHIFT, k.KEY_TAB], to_key=k.KEY_KP4,
          on='tap', before=[lambda b, e: set_kpenter_mode('alt_tab', b, e)])
+
+    def _not_in_kpenter_mode(bind: Bind, _e: InputEvent):
+        if k.KEY_KPENTER in bind.pressed:
+            return False
+
+    @bind(to_key=k.KEY_KP4, before=[_not_in_kpenter_mode])
+    def toggle_cursor_slow_motion(_bind: Bind, e: InputEvent):
+        command = ['busctl', '--user', 'call', 'localhost.MyService',
+                   '/localhost/MyService/Input', 'localhost.MyService.Input',
+                   'SetCursorSlowMotion', 'b']
+        match e.value:
+            case KeyEvent.key_down:
+                command.append('true')
+            case KeyEvent.key_up:
+                command.append('false')
+            case _:
+                return
+        _ = subprocess.run(command, stdout=subprocess.DEVNULL)
+
     bind(k.KEY_TAB, to_key=k.KEY_KP5,
          on='tap', before=[lambda b, e: set_kpenter_mode('alt_tab', b, e)])
 
-    @bind(to_key=k.KEY_KP5, on='hold', for_duration=3)
+    @bind(to_key=k.KEY_KP5, on='hold', for_seconds=3,
+          before=[_not_in_kpenter_mode])
     def toggle_scroll_on_button_down(_bind: Bind, _e: InputEvent):
         _ = subprocess.run(
             ('busctl', '--user', 'call', 'localhost.MyService',
-             '/localhost/MyService', 'MyService.Input',
-             'ToggleScrollOnButtonDown'))
+             '/localhost/MyService/Input', 'localhost.MyService.Input',
+             'ToggleScrollOnButtonDown'), stdout=subprocess.DEVNULL)
 
     # Minimize window
     bind([k.KEY_LEFTMETA, k.KEY_PAGEDOWN], to_key=[k.KEY_KPENTER, k.KEY_KP1],
@@ -117,7 +137,7 @@ def numpad_shortcuts(bind: Bind):
 
     @bind(to_key=k.KEY_KP0, on='tap')
     def command_goldendict_popup(bind: Bind, _e: InputEvent):
-        ps_result = subprocess.run(['flatpak', 'ps', '--columns=application'],
+        ps_result = subprocess.run(('flatpak', 'ps', '--columns=application'),
                                    capture_output=True, text=True)
         running_app_ids = [
             line.strip() for line in ps_result.stdout.splitlines()]
@@ -126,14 +146,15 @@ def numpad_shortcuts(bind: Bind):
 
         bind.uinput.hotkey(ecodes.KEY_LEFTCTRL, ecodes.KEY_C)
         sleep(0.03)
-        run_result = subprocess.run(['wl-paste', '-n', '-t', 'text'],
+        run_result = subprocess.run(('wl-paste', '-n', '-t', 'text'),
                                     capture_output=True, text=True)
         if run_result.returncode == 0 and run_result.stdout:
             _ = subprocess.run(
-                ['flatpak', 'run', '--branch=stable', '--arch=x86_64',
+                ('flatpak', 'run', '--branch=stable', '--arch=x86_64',
                  '--command=goldendict', '--file-forwarding',
                  'io.github.xiaoyifang.goldendict_ng',
-                 '--popup', run_result.stdout])
+                 '--popup', run_result.stdout), stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL)
 
     bind([k.KEY_LEFTMETA, k.KEY_V], to_key=k.KEY_KPDOT, on='tap')
 

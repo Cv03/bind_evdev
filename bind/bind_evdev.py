@@ -89,18 +89,18 @@ class Shortcut:
     instantiate.
     """
     __slots__: tuple[str, ...] = (
-        'bind', 'for_duration', 'before', 'shortcut_fn', 'after')
+        'bind', 'for_seconds', 'before', 'shortcut_fn', 'after')
 
     def __init__(
         self,
         bind: Bind,
         shortcut_fn: ShortcutFn,
-        for_duration: float = 0.3,
+        for_seconds: float = 0.3,
         before: Sequence[Before] | None = None,
         after: Sequence[After] | None = None
     ):
         self.bind: Bind = bind
-        self.for_duration: float = for_duration
+        self.for_seconds: float = for_seconds
         self.before: Sequence[Before] | None = before
         self.shortcut_fn: ShortcutFn = shortcut_fn
         self.after: Sequence[After] | None = after
@@ -321,20 +321,22 @@ class Bind:
             code = self._remap[code]
             e.code = code
 
-        if value == KeyEvent.key_down:
-            self.pressed.add(code)
-            if code in self.pressed_timestamp:
-                self.pressed_timestamp[code] = e.timestamp()
-
-        if value == KeyEvent.key_up:
-            captured: list[int] = []
-            for i in range(len(self._capture_key_up) - 1, -1, -1):
-                key_codes, shortcut = self._capture_key_up[i]
-                if code in key_codes:
-                    _ = shortcut(e)
-                    captured.append(i)
-            for i in captured:
-                _ = self._capture_key_up.pop(i)
+        match value:
+            case KeyEvent.key_down:
+                self.pressed.add(code)
+                if code in self.pressed_timestamp:
+                    self.pressed_timestamp[code] = e.timestamp()
+            case KeyEvent.key_up:
+                captured: list[int] = []
+                for i in range(len(self._capture_key_up) - 1, -1, -1):
+                    key_codes, shortcut = self._capture_key_up[i]
+                    if code in key_codes:
+                        _ = shortcut(e)
+                        captured.append(i)
+                for i in captured:
+                    _ = self._capture_key_up.pop(i)
+            case _:
+                pass
 
         registry_entry = self._registry.get(code)
         is_fire_original = registry_entry is None
@@ -369,7 +371,7 @@ class Bind:
                             if (s := shortcuts.get('hold')
                                 ) and code not in self._hold_fired:
                                 if (e.timestamp() - self.pressed_timestamp[
-                                        code] > s.for_duration):
+                                        code] > s.for_seconds):
                                     is_fire_original = s(e)
                                     if not is_fire_original:
                                         self._hold_fired.add(code)
@@ -388,7 +390,7 @@ class Bind:
                                 if timestamp is None:
                                     timestamp = e.timestamp()
                                 if (timestamp - self.pressed_timestamp[
-                                        code] > s.for_duration):
+                                        code] > s.for_seconds):
                                     is_fire_original = s(e)
 
                             if ('hold' in shortcuts and code in self._hold_fired):
@@ -510,7 +512,7 @@ class Bind:
         *args: int | Sequence[int] | ShortcutFn | None,
         to_key: int | Sequence[int],
         on: On = 'raw',
-        for_duration: float = 0.3,
+        for_seconds: float = 0.3,
         before: Sequence[Before] | None = None,
         after: Sequence[After] | None = None,
     ):
@@ -520,11 +522,11 @@ class Bind:
         match len(args):
             case 1:
                 return self.inline(
-                    args[0], to_key=to_key, on=on, for_duration=for_duration,
+                    args[0], to_key=to_key, on=on, for_seconds=for_seconds,
                     before=before, after=after)
             case 0:
                 return self.decorator(
-                    to_key=to_key, on=on, for_duration=for_duration,
+                    to_key=to_key, on=on, for_seconds=for_seconds,
                     before=before, after=after)
             case _:
                 raise TypeError('Accept at most one positional argument.')
@@ -536,7 +538,7 @@ class Bind:
         *,
         to_key: int | Sequence[int],
         on: On = 'raw',
-        for_duration: float = 0.3,
+        for_seconds: float = 0.3,
         before: Sequence[Before] | None = None,
         after: Sequence[After] | None = None,
     ):
@@ -548,8 +550,7 @@ class Bind:
                           None, it creates a no-op shortcut.
         :param to_key: The trigger key or key sequence (modifiers + trigger).
         :param on: When the shortcut should fire (e.g., 'raw', 'tap', 'hold').
-        :param for_duration: The duration threshold for 'hold' or 'tap'
-            detections.
+        :param for_seconds: Threshold for 'hold' or 'tap' detections.
         :param before: Local 'before' hooks for this specific shortcut.
         :param after: Local 'after' hooks for this specific shortcut.
         :return: The created Shortcut instance.
@@ -579,8 +580,7 @@ class Bind:
                     shortcut_fn = _hk
             else:
                 shortcut_fn = operation
-            shortcut = Shortcut(
-                self, shortcut_fn, for_duration, before, after)
+            shortcut = Shortcut(self, shortcut_fn, for_seconds, before, after)
             if on == 'raw':
                 self._capture_key_up_cache[shortcut] = (
                     frozenset((trigger, *modifier)), shortcut)
@@ -596,7 +596,7 @@ class Bind:
         *,
         to_key: int | Sequence[int],
         on: On = 'raw',
-        for_duration: float = 0.3,
+        for_seconds: float = 0.3,
         before: Sequence[Before] | None = None,
         after: Sequence[After] | None = None,
     ):
@@ -613,7 +613,7 @@ class Bind:
         """
         def decorator(shortcut_fn: ShortcutFn):
             shortcut = self.inline(
-                shortcut_fn, to_key=to_key, on=on, for_duration=for_duration,
+                shortcut_fn, to_key=to_key, on=on, for_seconds=for_seconds,
                 before=before, after=after)
             return shortcut
         return decorator
