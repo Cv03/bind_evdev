@@ -88,17 +88,17 @@ def numpad_shortcuts(bind: Bind):
 
     @bind(to_key=k.KEY_KP4, before=[_not_in_kpenter_mode])
     def toggle_cursor_slow_motion(_bind: Bind, e: InputEvent):
-        command = ['busctl', '--user', 'call', 'localhost.MyService',
-                   '/localhost/MyService/Input', 'localhost.MyService.Input',
-                   'SetCursorSlowMotion', 'b']
         match e.value:
             case KeyEvent.key_down:
-                command.append('true')
+                value = 'true'
             case KeyEvent.key_up:
-                command.append('false')
+                value = 'false'
             case _:
                 return
-        _ = subprocess.run(command, stdout=subprocess.DEVNULL)
+        _ = subprocess.run(
+            ('busctl', '--user', 'call', 'localhost.MyService',
+             '/localhost/MyService/Input', 'localhost.MyService.Input',
+             'SetCursorSlowMotion', 'b', value), stdout=subprocess.DEVNULL)
 
     bind(k.KEY_TAB, to_key=k.KEY_KP5,
          on='tap', before=[lambda b, e: set_kpenter_mode('alt_tab', b, e)])
