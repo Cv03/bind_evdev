@@ -89,6 +89,8 @@ def numpad_shortcuts(bind: Bind):
     @bind(to_key=k.KEY_KP4, before=[_not_in_kpenter_mode])
     def toggle_cursor_slow_motion(_bind: Bind, e: InputEvent):
         match e.value:
+            case KeyEvent.key_hold:
+                return
             case KeyEvent.key_down:
                 value = 'true'
             case KeyEvent.key_up:

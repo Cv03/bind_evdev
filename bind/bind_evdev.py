@@ -322,6 +322,8 @@ class Bind:
             e.code = code
 
         match value:
+            case KeyEvent.key_hold:
+                pass
             case KeyEvent.key_down:
                 self.pressed.add(code)
                 if code in self.pressed_timestamp:
@@ -356,14 +358,6 @@ class Bind:
                         break
 
                     match value:
-                        case KeyEvent.key_down:
-                            if s := shortcuts.get('raw'):
-                                is_fire_original = s(e)
-                                self._capture_key_up.append(
-                                    self._capture_key_up_cache[s])
-
-                            if s := shortcuts.get('tap'):
-                                is_fire_original = s(e)
                         case KeyEvent.key_hold:
                             if s := shortcuts.get('raw'):
                                 is_fire_original = s(e)
@@ -375,6 +369,14 @@ class Bind:
                                     is_fire_original = s(e)
                                     if not is_fire_original:
                                         self._hold_fired.add(code)
+                        case KeyEvent.key_down:
+                            if s := shortcuts.get('raw'):
+                                is_fire_original = s(e)
+                                self._capture_key_up.append(
+                                    self._capture_key_up_cache[s])
+
+                            if s := shortcuts.get('tap'):
+                                is_fire_original = s(e)
                         case KeyEvent.key_up:
                             if shortcuts.get('raw'):
                                 is_fire_original = None
@@ -396,8 +398,7 @@ class Bind:
                             if ('hold' in shortcuts and code in self._hold_fired):
                                 self._hold_fired.remove(code)
                         case _:
-                            raise ValueError('_not_possible_')
-
+                            pass
                     break
 
         global_after_flag = None
