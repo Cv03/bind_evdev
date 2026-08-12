@@ -321,24 +321,21 @@ class Bind:
             code = self._remap[code]
             e.code = code
 
-        match value:
-            case KeyEvent.key_hold:
-                pass
-            case KeyEvent.key_down:
-                self.pressed.add(code)
-                if code in self.pressed_timestamp:
-                    self.pressed_timestamp[code] = e.timestamp()
-            case KeyEvent.key_up:
-                captured: list[int] = []
-                for i in range(len(self._capture_key_up) - 1, -1, -1):
-                    key_codes, shortcut = self._capture_key_up[i]
-                    if code in key_codes:
-                        _ = shortcut(e)
-                        captured.append(i)
-                for i in captured:
-                    _ = self._capture_key_up.pop(i)
-            case _:
-                pass
+        if value == KeyEvent.key_hold:
+            pass
+        elif value == KeyEvent.key_down:
+            self.pressed.add(code)
+            if code in self.pressed_timestamp:
+                self.pressed_timestamp[code] = e.timestamp()
+        else:
+            captured: list[int] = []
+            for i in range(len(self._capture_key_up) - 1, -1, -1):
+                key_codes, shortcut = self._capture_key_up[i]
+                if code in key_codes:
+                    _ = shortcut(e)
+                    captured.append(i)
+            for i in captured:
+                _ = self._capture_key_up.pop(i)
 
         registry_entry = self._registry.get(code)
         is_fire_original = registry_entry is None
@@ -357,48 +354,45 @@ class Bind:
                     if 'never' in shortcuts:
                         break
 
-                    match value:
-                        case KeyEvent.key_hold:
-                            if s := shortcuts.get('raw'):
-                                is_fire_original = s(e)
+                    if value == KeyEvent.key_hold:
+                        if s := shortcuts.get('raw'):
+                            is_fire_original = s(e)
 
-                            if (s := shortcuts.get('hold')
-                                ) and code not in self._hold_fired:
-                                if (e.timestamp() - self.pressed_timestamp[
-                                        code] > s.for_seconds):
-                                    is_fire_original = s(e)
-                                    if not is_fire_original:
-                                        self._hold_fired.add(code)
-                        case KeyEvent.key_down:
-                            if s := shortcuts.get('raw'):
+                        if (s := shortcuts.get(
+                                'hold')) and code not in self._hold_fired:
+                            if (e.timestamp() - self.pressed_timestamp[
+                                    code] > s.for_seconds):
                                 is_fire_original = s(e)
-                                self._capture_key_up.append(
-                                    self._capture_key_up_cache[s])
+                                if not is_fire_original:
+                                    self._hold_fired.add(code)
+                    elif value == KeyEvent.key_down:
+                        if s := shortcuts.get('raw'):
+                            is_fire_original = s(e)
+                            self._capture_key_up.append(
+                                self._capture_key_up_cache[s])
 
-                            if s := shortcuts.get('tap'):
+                        if s := shortcuts.get('tap'):
+                            is_fire_original = s(e)
+                    else:
+                        if shortcuts.get('raw'):
+                            is_fire_original = None
+
+                        timestamp = None
+                        if s := shortcuts.get('tap_release'):
+                            timestamp = e.timestamp()
+                            # Assume no taps are longer than 0.3 seconds.
+                            if (timestamp - self.pressed_timestamp[
+                                    code] < 0.3):
                                 is_fire_original = s(e)
-                        case KeyEvent.key_up:
-                            if shortcuts.get('raw'):
-                                is_fire_original = None
-
-                            timestamp = None
-                            if s := shortcuts.get('tap_release'):
+                        if s := shortcuts.get('hold_release'):
+                            if timestamp is None:
                                 timestamp = e.timestamp()
-                                # Assume no taps are longer than 0.3 seconds.
-                                if (timestamp - self.pressed_timestamp[
-                                        code] < 0.3):
-                                    is_fire_original = s(e)
-                            if s := shortcuts.get('hold_release'):
-                                if timestamp is None:
-                                    timestamp = e.timestamp()
-                                if (timestamp - self.pressed_timestamp[
-                                        code] > s.for_seconds):
-                                    is_fire_original = s(e)
+                            if (timestamp - self.pressed_timestamp[
+                                    code] > s.for_seconds):
+                                is_fire_original = s(e)
 
-                            if ('hold' in shortcuts and code in self._hold_fired):
-                                self._hold_fired.remove(code)
-                        case _:
-                            pass
+                        if 'hold' in shortcuts and code in self._hold_fired:
+                            self._hold_fired.remove(code)
                     break
 
         global_after_flag = None

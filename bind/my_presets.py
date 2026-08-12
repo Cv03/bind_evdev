@@ -88,15 +88,13 @@ def numpad_shortcuts(bind: Bind):
 
     @bind(to_key=k.KEY_KP4, before=[_not_in_kpenter_mode])
     def toggle_cursor_slow_motion(_bind: Bind, e: InputEvent):
-        match e.value:
-            case KeyEvent.key_hold:
-                return
-            case KeyEvent.key_down:
-                value = 'true'
-            case KeyEvent.key_up:
-                value = 'false'
-            case _:
-                return
+        if e.value == KeyEvent.key_hold:
+            return
+        elif e.value == KeyEvent.key_down:
+            value = 'true'
+        else:
+            value = 'false'
+
         _ = subprocess.run(
             ('busctl', '--user', 'call', 'localhost.MyService',
              '/localhost/MyService/Input', 'localhost.MyService.Input',
@@ -105,7 +103,7 @@ def numpad_shortcuts(bind: Bind):
     bind(k.KEY_TAB, to_key=k.KEY_KP5,
          on='tap', before=[lambda b, e: set_kpenter_mode('alt_tab', b, e)])
 
-    @bind(to_key=k.KEY_KP5, on='hold', for_seconds=3,
+    @bind(to_key=k.KEY_KP5, on='hold', for_seconds=2,
           before=[_not_in_kpenter_mode])
     def toggle_scroll_on_button_down(_bind: Bind, _e: InputEvent):
         _ = subprocess.run(
