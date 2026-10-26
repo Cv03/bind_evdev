@@ -1,9 +1,9 @@
-# pyright: reportUnusedCallResult=false, reportArgumentType=false, reportUnusedFunction=false
+# pyright: reportUnusedCallResult=false
 
 import subprocess
-
 from time import sleep
-from evdev import ecodes, InputEvent, KeyEvent
+
+from evdev import InputEvent, KeyEvent, ecodes
 
 from .bind_evdev import Bind
 

@@ -1,10 +1,10 @@
-from typing import Protocol, cast, Any, Never, Callable, Literal
-from sys import stderr
 from collections import defaultdict
-from collections.abc import Sequence, Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
+from sys import stderr
 from time import sleep
+from typing import Any, Callable, Literal, Never, Protocol, cast, overload
 
-from evdev import KeyEvent, ecodes, InputEvent, UInput, InputDevice
+from evdev import InputDevice, InputEvent, KeyEvent, UInput, ecodes
 from evdev import list_devices  # pyright:ignore[reportUnknownVariableType]
 
 
@@ -502,6 +502,32 @@ class Bind:
             except KeyboardInterrupt:
                 exit()
 
+    @overload
+    def __call__(
+        self,
+        operation: int | Sequence[int] | ShortcutFn | None,
+        /,
+        *,
+        to_key: int | Sequence[int],
+        on: On = 'raw',
+        for_seconds: float = 0.3,
+        before: Sequence[Before] | None = None,
+        after: Sequence[After] | None = None,
+    ) -> Shortcut:
+        ...
+
+    @overload
+    def __call__(
+        self,
+        *,
+        to_key: int | Sequence[int],
+        on: On = 'raw',
+        for_seconds: float = 0.3,
+        before: Sequence[Before] | None = None,
+        after: Sequence[After] | None = None,
+    ) -> Callable[[ShortcutFn], Shortcut]:
+        ...
+
     def __call__(
         self,
         *args: int | Sequence[int] | ShortcutFn | None,
@@ -594,7 +620,7 @@ class Bind:
         for_seconds: float = 0.3,
         before: Sequence[Before] | None = None,
         after: Sequence[After] | None = None,
-    ):
+    ) -> Callable[[ShortcutFn], Shortcut]:
         """
         Register a shortcut function by decorator.
 
