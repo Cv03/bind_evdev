@@ -1,5 +1,3 @@
-# pyright: reportUnusedCallResult=false
-
 import subprocess
 from time import sleep
 

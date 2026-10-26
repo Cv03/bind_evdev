@@ -513,7 +513,7 @@ class Bind:
         for_seconds: float = 0.3,
         before: Sequence[Before] | None = None,
         after: Sequence[After] | None = None,
-    ) -> Shortcut:
+    ) -> None:
         ...
 
     @overload
@@ -577,6 +577,21 @@ class Bind:
         :return: The created Shortcut instance.
         :raises TypeError: if 'raw' is used with a sequence of key codes.
         """
+        _ = self._register_shortcut(
+            operation, to_key=to_key, on=on, for_seconds=for_seconds,
+            before=before, after=after)
+
+    def _register_shortcut(
+        self,
+        operation: int | Sequence[int] | ShortcutFn | None,
+        /,
+        *,
+        to_key: int | Sequence[int],
+        on: On = 'raw',
+        for_seconds: float = 0.3,
+        before: Sequence[Before] | None = None,
+        after: Sequence[After] | None = None,
+    ):
         trigger, modifier = _split_key(to_key)
 
         if operation is None:
@@ -633,7 +648,7 @@ class Bind:
         ```
         """
         def decorator(shortcut_fn: ShortcutFn):
-            shortcut = self.inline(
+            shortcut = self._register_shortcut(
                 shortcut_fn, to_key=to_key, on=on, for_seconds=for_seconds,
                 before=before, after=after)
             return shortcut
