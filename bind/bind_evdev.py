@@ -525,7 +525,7 @@ class Bind:
         for_seconds: float = 0.3,
         before: Sequence[Before] | None = None,
         after: Sequence[After] | None = None,
-    ) -> Callable[[ShortcutFn], Shortcut]:
+    ) -> Callable[[ShortcutFn], ShortcutFn]:
         ...
 
     def __call__(
@@ -542,7 +542,7 @@ class Bind:
         """
         match len(args):
             case 1:
-                return self.inline(
+                self.inline(
                     args[0], to_key=to_key, on=on, for_seconds=for_seconds,
                     before=before, after=after)
             case 0:
@@ -550,7 +550,9 @@ class Bind:
                     to_key=to_key, on=on, for_seconds=for_seconds,
                     before=before, after=after)
             case _:
-                raise TypeError('Accept at most one positional argument.')
+                raise TypeError(
+                    'Pass exactly one positional argument for inline bindings,'
+                    + ' and no positional arguments when called as decorator.')
 
     def inline(
         self,
@@ -577,21 +579,6 @@ class Bind:
         :return: The created Shortcut instance.
         :raises TypeError: if 'raw' is used with a sequence of key codes.
         """
-        _ = self._register_shortcut(
-            operation, to_key=to_key, on=on, for_seconds=for_seconds,
-            before=before, after=after)
-
-    def _register_shortcut(
-        self,
-        operation: int | Sequence[int] | ShortcutFn | None,
-        /,
-        *,
-        to_key: int | Sequence[int],
-        on: On = 'raw',
-        for_seconds: float = 0.3,
-        before: Sequence[Before] | None = None,
-        after: Sequence[After] | None = None,
-    ):
         trigger, modifier = _split_key(to_key)
 
         if operation is None:
@@ -625,7 +612,6 @@ class Bind:
             self.record_pressed_timestamp(trigger)
 
         self._registry[trigger][modifier][on] = shortcut
-        return shortcut
 
     def decorator(
         self,
@@ -635,7 +621,7 @@ class Bind:
         for_seconds: float = 0.3,
         before: Sequence[Before] | None = None,
         after: Sequence[After] | None = None,
-    ) -> Callable[[ShortcutFn], Shortcut]:
+    ) -> Callable[[ShortcutFn], ShortcutFn]:
         """
         Register a shortcut function by decorator.
 
@@ -648,10 +634,10 @@ class Bind:
         ```
         """
         def decorator(shortcut_fn: ShortcutFn):
-            shortcut = self._register_shortcut(
+            self.inline(
                 shortcut_fn, to_key=to_key, on=on, for_seconds=for_seconds,
                 before=before, after=after)
-            return shortcut
+            return shortcut_fn
         return decorator
 
     def import_preset(self, preset: Callable[[Bind], None]):
